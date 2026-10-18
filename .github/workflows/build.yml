@@ -1121,7 +1121,14 @@ jobs:
     - name: Build Steam dock helper
       run: |
         # cache-source: dock
-        bash build/madeira-dock/build.sh --check 2>&1 | tee dock.log
+        # Run native tests with Apple's host compiler, independent of MinGW in PATH.
+        host_cc="$(xcrun --sdk macosx --find clang)"
+        host_sdk="$(xcrun --sdk macosx --show-sdk-path)"
+        test -x "$host_cc"
+        test -f "$host_sdk/usr/include/assert.h"
+        (cd madeira-dock && HOST_CC="$host_cc" SDKROOT="$host_sdk" bash tools/check.sh) 2>&1 | tee dock-tests.log
+        # Build the Windows helper separately with its explicit MinGW compiler.
+        bash build/madeira-dock/build.sh 2>&1 | tee dock.log
       if: steps.cache_dock.outputs.cache-hit != 'true'
     - name: Save completed dock
       uses: actions/cache/save@v5
