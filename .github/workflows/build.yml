@@ -609,7 +609,7 @@ jobs:
           toolchains/llvm-project
           toolchains/llvm-ios-build
           toolchains/llvm-host-build
-        key: pocket-llvm15-ios-v1-${{ steps.sdk.outputs.id }}
+        key: pocket-llvm15-ios-v2-${{ steps.sdk.outputs.id }}
     - name: Build LLVM 15.0.7 for iOS (two-stage, per build/dxmt-ios/README.md)
       if: steps.native.outputs.cache-hit != 'true' && steps.llvmcache.outputs.cache-hit != 'true'
       shell: bash
@@ -619,7 +619,17 @@ jobs:
         # README: Apple ld rejects --gc-sections; make the Darwin branch cover iOS
         sed -i '' 's/MATCHES "Darwin"/MATCHES "Darwin|iOS"/' \
           toolchains/llvm-project/llvm/cmake/modules/AddLLVM.cmake
-        grep -n 'Darwin|iOS' toolchains/llvm-project/llvm/cmake/modules/AddLLVM.cmake | head
+        grep -n 'Darwin|iOS' toolchains/llvm-project/llvm/cmake/modules/AddLLVM.cmake
+
+        # LLVM 15 also misclassifies iOS in its ELF undefined-symbol linker flags.
+        python3 - <<'PYFIX'
+        from pathlib import Path
+        p = Path('toolchains/llvm-project/llvm/cmake/modules/HandleLLVMOptions.cmake')
+        text = p.read_text()
+        old = 'Darwin|FreeBSD|OpenBSD|DragonFly|AIX|SunOS|OS390'
+        assert text.count(old) == 1, 'LLVM linker-flags patch anchor changed'
+        p.write_text(text.replace(old, 'Darwin|iOS|FreeBSD|OpenBSD|DragonFly|AIX|SunOS|OS390'))
+        PYFIX
 
         # stage 1: host llvm-tblgen only (use Xcode clang, not brew's newer one)
         cmake -S toolchains/llvm-project/llvm -B toolchains/llvm-host-build -G Ninja \
@@ -627,9 +637,9 @@ jobs:
           -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
           -DLLVM_TARGETS_TO_BUILD="" -DLLVM_INCLUDE_TESTS=Off \
           -DLLVM_INCLUDE_EXAMPLES=Off -DLLVM_INCLUDE_BENCHMARKS=Off \
-          > "$GITHUB_WORKSPACE/llvm-host-cfg.log" 2>&1
+          2>&1 | tee "$GITHUB_WORKSPACE/llvm-host-cfg.log"
         cmake --build toolchains/llvm-host-build --target llvm-tblgen \
-          -j"$(sysctl -n hw.ncpu)" > "$GITHUB_WORKSPACE/llvm-host-build.log" 2>&1
+          -j"$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/llvm-host-build.log"
 
         # stage 2: iOS target libs, reusing host tblgen
         cmake -S toolchains/llvm-project/llvm -B toolchains/llvm-ios-build -G Ninja \
@@ -642,14 +652,16 @@ jobs:
           -DLLVM_TABLEGEN="$GITHUB_WORKSPACE/toolchains/llvm-host-build/bin/llvm-tblgen" \
           -DCMAKE_MACOSX_BUNDLE=OFF \
           -DLLVM_BUILD_UTILS=Off -DLLVM_BUILD_TOOLS=Off \
+          -DLLVM_INCLUDE_TOOLS=Off -DLLVM_BUILD_LLVM_DYLIB=Off \
+          -DLLVM_LINK_LLVM_DYLIB=Off -DBUILD_SHARED_LIBS=Off \
           -DLLVM_TARGETS_TO_BUILD="" \
           -DLLVM_INCLUDE_TESTS=Off -DLLVM_INCLUDE_EXAMPLES=Off \
           -DLLVM_INCLUDE_BENCHMARKS=Off -DLLVM_INCLUDE_UTILS=Off \
           -DLLVM_ENABLE_TERMINFO=Off -DLLVM_ENABLE_LIBXML2=Off \
           -DLLVM_ENABLE_ZSTD=Off -DLLVM_ENABLE_ZLIB=Off \
-          > "$GITHUB_WORKSPACE/llvm-ios-cfg.log" 2>&1
+          2>&1 | tee "$GITHUB_WORKSPACE/llvm-ios-cfg.log"
         cmake --build toolchains/llvm-ios-build -j"$(sysctl -n hw.ncpu)" \
-          > "$GITHUB_WORKSPACE/llvm-ios-build.log" 2>&1
+          2>&1 | tee "$GITHUB_WORKSPACE/llvm-ios-build.log"
     - uses: actions/cache/save@v5
       if: steps.native.outputs.cache-hit != 'true' && steps.llvmcache.outputs.cache-hit != 'true'
       with:
@@ -657,7 +669,7 @@ jobs:
           toolchains/llvm-project
           toolchains/llvm-ios-build
           toolchains/llvm-host-build
-        key: pocket-llvm15-ios-v1-${{ steps.sdk.outputs.id }}
+        key: pocket-llvm15-ios-v2-${{ steps.sdk.outputs.id }}
     - name: Adapt Wine dependency scanning for external iOS shim headers
       run: |
         python3 - <<'PY'
