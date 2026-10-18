@@ -1245,7 +1245,14 @@ jobs:
       run: |
         APP=build-out/DerivedData/Build/Products/Debug-iphoneos/Madeira.app
         test -s "$APP/Madeira"
-        xcrun dyld_info -exports "$APP/Madeira" > output/exports.txt
+        # Xcode Debug builds may put the app code in a dylib beside a launcher stub.
+        EXPORT_BINARY="$APP/Madeira"
+        if [ -f "$APP/Madeira.debug.dylib" ]; then
+          test -s "$APP/Madeira.debug.dylib"
+          EXPORT_BINARY="$APP/Madeira.debug.dylib"
+        fi
+        echo "Checking graphics exports in $EXPORT_BINARY"
+        xcrun dyld_info -exports "$EXPORT_BINARY" > output/exports.txt
         for sym in macdrv_functions get_win_data release_win_data macdrv_view_create_metal_view macdrv_view_get_metal_layer macdrv_view_release_metal_view; do
           grep -qE "_${sym}$" output/exports.txt || { echo "::error::Missing graphics export $sym"; exit 1; }
         done
