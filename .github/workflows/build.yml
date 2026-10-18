@@ -1224,6 +1224,14 @@ jobs:
         TXT
         cp pocket-additions/README.md output/POCKET-ADDITIONS.md
         cp -R pocket-additions output/pocket-additions
+    - name: Ensure Metal compiler is available for application shaders
+      run: |
+        # A DXMT cache hit skips its build step, including toolchain installation.
+        # The app still compiles its own Metal shaders on this fresh runner.
+        if ! xcrun --sdk iphoneos metal --version; then
+          xcodebuild -downloadComponent MetalToolchain
+        fi
+        xcrun --sdk iphoneos metal --version
     - name: Compile the experimental iOS application
       run: |
         xcodebuild -project app/Madeira.xcodeproj -scheme Madeira \
