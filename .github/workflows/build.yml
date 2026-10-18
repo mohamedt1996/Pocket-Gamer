@@ -751,9 +751,11 @@ jobs:
         mkdir -p wine/build-native
         cd wine/build-native
         ../configure --enable-win64 --without-x --disable-tests 2>&1 | tee "$GITHUB_WORKSPACE/wine-host-configure.log"
-        make -j2 tools/widl/widl tools/wrc/wrc tools/winebuild/winebuild tools/winegcc/winegcc 2>&1 | tee "$GITHUB_WORKSPACE/wine-host-tools.log"
-        make -j2 include 2>&1 | tee -a "$GITHUB_WORKSPACE/wine-host-tools.log"
-        test -x tools/widl/widl
+        make -j2 __tooldeps__ 2>&1 | tee "$GITHUB_WORKSPACE/wine-host-tools.log"
+        # Wine's own target includes make_xftmpl and all other native generators.
+        for tool in tools/makedep tools/make_xftmpl tools/widl/widl tools/wrc/wrc tools/wmc/wmc tools/winebuild/winebuild tools/winegcc/winegcc tools/sfnt2fon/sfnt2fon; do
+          test -x "$tool" || { echo "::error::Missing Wine host tool: $tool"; exit 1; }
+        done
       if: steps.cache_winehost.outputs.cache-hit != 'true'
     - name: Save completed winehost
       uses: actions/cache/save@v5
