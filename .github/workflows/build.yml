@@ -1046,6 +1046,17 @@ jobs:
         xcodebuild -downloadComponent MetalToolchain
         # Match dxmt/src/airconv/meson.build and its Metal -> AIR -> C-header generators.
         # These are embedded AIR helper modules, not a macOS app binary.
+        # Avoid a private Metal intrinsic whose signature changed in Xcode 27.
+        python3 - <<'PYMETAL'
+        from pathlib import Path
+        p = Path('dxmt/src/airconv/shaders/air_tessellation.metal')
+        old = '__metal_atomic_fetch_add_explicit(out_count, 1, int(memory_order_relaxed), __METAL_MEMORY_SCOPE_THREADGROUP__)'
+        new = 'atomic_fetch_add_explicit(reinterpret_cast<threadgroup atomic_int *>(out_count), 1, memory_order_relaxed)'
+        source = p.read_text()
+        if source.count(old) != 1:
+            raise SystemExit('Unexpected DXMT atomic source; review compatibility patch')
+        p.write_text(source.replace(old, new))
+        PYMETAL
         mkdir -p build/dxmt-ios/shader-headers
         for shader in air_msad air_samplepos air_tessellation; do
           xcrun -sdk macosx metal -std=metal3.1 --target=air64-apple-macos14.0 \
