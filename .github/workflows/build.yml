@@ -1044,7 +1044,31 @@ jobs:
       run: |
         # cache-source: dxmt
         xcodebuild -downloadComponent MetalToolchain
-        bash build/dxmt-ios/build.sh 2>&1 | tee dxmt.log
+        # Match dxmt/src/airconv/meson.build and its Metal -> AIR -> C-header generators.
+        # These are embedded AIR helper modules, not a macOS app binary.
+        mkdir -p build/dxmt-ios/shader-headers
+        for shader in air_msad air_samplepos air_tessellation; do
+          xcrun -sdk macosx metal -std=metal3.1 --target=air64-apple-macos14.0 \
+            -c "dxmt/src/airconv/shaders/$shader.metal" \
+            -o "build/dxmt-ios/shader-headers/$shader.air"
+          xxd -n "$shader" -i "build/dxmt-ios/shader-headers/$shader.air" \
+            "build/dxmt-ios/shader-headers/$shader.h"
+          test -s "build/dxmt-ios/shader-headers/$shader.h"
+        done
+        if bash build/dxmt-ios/build.sh 2>&1 | tee dxmt.log; then
+          :
+        else
+          # Upstream redirects compiler diagnostics into individual .err files.
+          python3 - <<'PYERRORS'
+        from pathlib import Path
+        for p in sorted(Path('build/dxmt-ios/obj').glob('*.err')):
+            text=p.read_text(errors='replace')
+            if 'error:' in text:
+                print('=== '+str(p)+' ===', flush=True)
+                print(text, flush=True)
+        PYERRORS
+          exit 1
+        fi
         xcrun -sdk iphoneos libtool -static -o app/Madeira/libdxmt_combined.a \
           build/dxmt-ios/obj/*.o toolchains/llvm-ios-build/lib/*.a
       if: steps.cache_dxmt.outputs.cache-hit != 'true'
