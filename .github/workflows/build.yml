@@ -1,0 +1,570 @@
+# Experimental iOS Windows runtime integration, based on GPL-3.0-or-later Madeira.
+# Automatically builds the iOS experiment on push to main. No app source is needed
+# in the receiving repository: the pinned Madeira source is fetched explicitly.
+# Standard xcode-27 runner only. First native build can take hours.
+# This is an UNTESTED clean-build attempt, not a guarantee of a working IPA/game.
+# Reuses upstream PE modules and StikJIT; this is NOT a full source rebuild of every dependency.
+# Prior hub-template jobs are opt-in because those app/server sources do not exist yet.
+# Original Wine/LLVM build recipes adapted from Aettarrass-sys/madeira-bcd.
+# No QEMU/SPICE/Android-VM dependency builds occur here.
+name: Pocket Arcade - experimental iOS Windows runtime
+permissions:
+  contents: read
+concurrency:
+  group: pocket-arcade-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  FLUTTER_VERSION: 3.35.7
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v7
+    - name: Require actual application sources
+      shell: bash
+      run: |
+        set -euo pipefail
+        for path in mobile/pubspec.yaml mobile/pubspec.lock mobile/lib/main.dart mobile/android mobile/ios mobile/test server/Dockerfile server/.dockerignore ci/test-server.sh; do
+          if [[ ! -e "$path" ]]; then
+            echo "::error::Missing $path. This workflow builds existing source; it does not generate the application or integrate emulators."
+            exit 1
+          fi
+        done
+    - uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: stable
+        cache: true
+    - name: Resolve locked dependencies and validate mobile source
+      working-directory: mobile
+      run: |
+        set -euo pipefail
+        flutter pub get --enforce-lockfile
+        flutter analyze --fatal-infos
+        flutter test
+    if: github.event_name == 'workflow_dispatch' && inputs.build_full_hub
+  android:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: stable
+        cache: true
+    - uses: gradle/actions/setup-gradle@v4
+    - name: Build installable development APKs
+      working-directory: mobile
+      run: |
+        set -euo pipefail
+        flutter pub get --enforce-lockfile
+        flutter build apk --debug --split-per-abi --build-number="$GITHUB_RUN_NUMBER"
+    - uses: actions/upload-artifact@v7
+      with:
+        name: Android-development-APKs
+        path: mobile/build/app/outputs/flutter-apk/*-debug.apk
+        if-no-files-found: error
+        retention-days: 14
+    if: github.event_name == 'workflow_dispatch' && inputs.build_full_hub
+  ios:
+    needs: validate
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v7
+    - uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ env.FLUTTER_VERSION }}
+        channel: stable
+        cache: true
+    - name: Build unsigned physical-device application
+      working-directory: mobile
+      run: |
+        set -euo pipefail
+        flutter pub get --enforce-lockfile
+        flutter build ios --release --no-codesign --build-number="$GITHUB_RUN_NUMBER"
+    - name: Package unsigned IPA
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -d mobile/build/ios/iphoneos/Runner.app
+        mkdir -p output/Payload
+        ditto mobile/build/ios/iphoneos/Runner.app output/Payload/Runner.app
+        cd output
+        /usr/bin/zip -q -r PocketArcade-unsigned.ipa Payload
+        unzip -tq PocketArcade-unsigned.ipa
+        shasum -a 256 PocketArcade-unsigned.ipa > SHA256SUMS.txt
+    - uses: actions/upload-artifact@v7
+      with:
+        name: iOS-unsigned-IPA
+        path: |
+          output/PocketArcade-unsigned.ipa
+          output/SHA256SUMS.txt
+        if-no-files-found: error
+        retention-days: 14
+    if: github.event_name == 'workflow_dispatch' && inputs.build_full_hub
+  server:
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v7
+    - uses: docker/setup-buildx-action@v3
+    - name: Build server image for x86-64 Ubuntu
+      uses: docker/build-push-action@v6
+      with:
+        context: ./server
+        platforms: linux/amd64
+        load: true
+        tags: pocket-arcade-server:ci
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    - name: Run project-owned integration checks
+      run: bash ci/test-server.sh pocket-arcade-server:ci
+    - name: Export tested server image
+      run: |
+        set -euo pipefail
+        mkdir -p output
+        docker save pocket-arcade-server:ci | gzip -1 > output/pocket-arcade-server-amd64.tar.gz
+        cd output
+        sha256sum pocket-arcade-server-amd64.tar.gz > SHA256SUMS.txt
+    - uses: actions/upload-artifact@v7
+      with:
+        name: Ubuntu-server-amd64
+        path: output/*
+        if-no-files-found: error
+        retention-days: 7
+    if: github.event_name == 'workflow_dispatch' && inputs.build_full_hub
+  ios_windows_experiment:
+    runs-on: xcode-27
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: '2'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        repository: willfaust/Madeira
+        ref: 279fd0f83170425db002fe25d6bd62f6355f497d
+        persist-credentials: false
+    - name: Select Xcode and record toolchain
+      run: |
+        export DEVELOPER_DIR="$(xcode-select -p)"
+        echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
+        xcodebuild -version | grep -q '^Xcode 27'
+        xcodebuild -version
+        echo "id=$(xcodebuild -version | shasum -a 256 | cut -c1-16)-$(uname -m)" >> "$GITHUB_OUTPUT"
+        mkdir -p output
+      id: sdk
+    - name: Fetch pinned runtime dependencies (skip Linux test datasets)
+      run: |
+        git submodule update --init --depth 1 FEX wine dxmt madeira-dock
+        python3 - <<'PY'
+        import subprocess
+        rows=subprocess.check_output(['git','-C','FEX','config','-f','.gitmodules','--get-regexp',r'^submodule\..*\.path$'],text=True)
+        paths=[line.split(' ',1)[1] for line in rows.splitlines() if 'tests-bins' not in line]
+        subprocess.run(['git','-C','FEX','submodule','update','--init','--recursive','--depth','1','--',*paths],check=True)
+        PY
+        git -C dxmt submodule update --init --recursive --depth 1
+        git -C madeira-dock submodule update --init --recursive --depth 1
+        git submodule status --recursive > output/SOURCE-REVISIONS.txt
+        git rev-parse HEAD >> output/SOURCE-REVISIONS.txt
+    - name: Install compilation tools
+      run: |
+        brew install bison ninja meson cmake llvm lld ccache pkg-config autoconf automake libtool
+        echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
+        echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+        echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+        command -v rustup
+        rustup toolchain install 1.90.0 --profile minimal
+        rustup override set 1.90.0
+        rustup target add aarch64-apple-ios
+    - uses: actions/cache/restore@v5
+      id: mingw
+      with:
+        path: toolchains/llvm-mingw-20260421-ucrt-macos-universal
+        key: pocket-mingw-20260421-verified-v1
+    - name: Fetch checksum-pinned Windows cross compiler
+      run: |
+        mkdir -p toolchains
+        curl -fL --retry 3 https://github.com/mstorsjo/llvm-mingw/releases/download/20260421/llvm-mingw-20260421-ucrt-macos-universal.tar.xz -o "$RUNNER_TEMP/mingw.tar.xz"
+        echo "bd85a3975723815cef28dbbd2ca2cb0c926f6b348a12a0453f39f7af273cb3f7  $RUNNER_TEMP/mingw.tar.xz" | shasum -a 256 -c -
+        tar -xJf "$RUNNER_TEMP/mingw.tar.xz" -C toolchains
+      if: steps.mingw.outputs.cache-hit != 'true'
+    - uses: actions/cache/save@v5
+      if: steps.mingw.outputs.cache-hit != 'true'
+      with:
+        path: toolchains/llvm-mingw-20260421-ucrt-macos-universal
+        key: pocket-mingw-20260421-verified-v1
+    - name: Add cross compiler to PATH
+      run: |
+        echo "$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin" >> "$GITHUB_PATH"
+    - uses: actions/cache/restore@v5
+      id: native
+      with:
+        path: |-
+          app/Madeira/*.a
+          app/Madeira/arm64ec-windows/dockhost.exe
+          app/Madeira/arm64ec-windows/dock-notices.txt
+          app/Madeira/legal/LICENSES-rppairing-crates.txt
+          FEX/build-ios
+        key: pocket-native-v1-279fd0f-${{ steps.sdk.outputs.id }}
+    - uses: actions/cache/restore@v5
+      id: llvmcache
+      if: steps.native.outputs.cache-hit != 'true'
+      with:
+        path: |-
+          toolchains/llvm-project
+          toolchains/llvm-ios-build
+          toolchains/llvm-host-build
+        key: pocket-llvm15-ios-v1-${{ steps.sdk.outputs.id }}
+    - name: Build LLVM 15.0.7 for iOS (two-stage, per build/dxmt-ios/README.md)
+      if: steps.native.outputs.cache-hit != 'true' && steps.llvmcache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        git clone --depth 1 --branch llvmorg-15.0.7 \
+          https://github.com/llvm/llvm-project.git toolchains/llvm-project
+        # README: Apple ld rejects --gc-sections; make the Darwin branch cover iOS
+        sed -i '' 's/MATCHES "Darwin"/MATCHES "Darwin|iOS"/' \
+          toolchains/llvm-project/llvm/cmake/modules/AddLLVM.cmake
+        grep -n 'Darwin|iOS' toolchains/llvm-project/llvm/cmake/modules/AddLLVM.cmake | head
+
+        # stage 1: host llvm-tblgen only (use Xcode clang, not brew's newer one)
+        cmake -S toolchains/llvm-project/llvm -B toolchains/llvm-host-build -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+          -DLLVM_TARGETS_TO_BUILD="" -DLLVM_INCLUDE_TESTS=Off \
+          -DLLVM_INCLUDE_EXAMPLES=Off -DLLVM_INCLUDE_BENCHMARKS=Off \
+          > "$GITHUB_WORKSPACE/llvm-host-cfg.log" 2>&1
+        cmake --build toolchains/llvm-host-build --target llvm-tblgen \
+          -j"$(sysctl -n hw.ncpu)" > "$GITHUB_WORKSPACE/llvm-host-build.log" 2>&1
+
+        # stage 2: iOS target libs, reusing host tblgen
+        cmake -S toolchains/llvm-project/llvm -B toolchains/llvm-ios-build -G Ninja \
+          -DCMAKE_SYSTEM_NAME=iOS \
+          -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
+          -DCMAKE_OSX_ARCHITECTURES=arm64 \
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+          -DLLVM_TABLEGEN="$GITHUB_WORKSPACE/toolchains/llvm-host-build/bin/llvm-tblgen" \
+          -DCMAKE_MACOSX_BUNDLE=OFF \
+          -DLLVM_BUILD_UTILS=Off -DLLVM_BUILD_TOOLS=Off \
+          -DLLVM_TARGETS_TO_BUILD="" \
+          -DLLVM_INCLUDE_TESTS=Off -DLLVM_INCLUDE_EXAMPLES=Off \
+          -DLLVM_INCLUDE_BENCHMARKS=Off -DLLVM_INCLUDE_UTILS=Off \
+          -DLLVM_ENABLE_TERMINFO=Off -DLLVM_ENABLE_LIBXML2=Off \
+          -DLLVM_ENABLE_ZSTD=Off -DLLVM_ENABLE_ZLIB=Off \
+          > "$GITHUB_WORKSPACE/llvm-ios-cfg.log" 2>&1
+        cmake --build toolchains/llvm-ios-build -j"$(sysctl -n hw.ncpu)" \
+          > "$GITHUB_WORKSPACE/llvm-ios-build.log" 2>&1
+    - uses: actions/cache/save@v5
+      if: steps.native.outputs.cache-hit != 'true' && steps.llvmcache.outputs.cache-hit != 'true'
+      with:
+        path: |-
+          toolchains/llvm-project
+          toolchains/llvm-ios-build
+          toolchains/llvm-host-build
+        key: pocket-llvm15-ios-v1-${{ steps.sdk.outputs.id }}
+    - name: Adapt Wine dependency scanning for external iOS shim headers
+      run: |
+        python3 - <<'PY'
+        from pathlib import Path
+        p=Path('wine/tools/makedep.c');s=p.read_text()
+        old='fatal_error( "%s must be included before other headers\\n", file->name );'
+        new='fprintf( stderr, "warning: %s precedes config.h in the iOS port\\n", file->name );'
+        assert s.count(old)==1
+        s=s.replace(old,new)
+        old='    if (make->external) return NULL; /* ignore missing files in external libs */\n'
+        assert s.count(old)==1
+        s=s.replace(old,old+'    if (!strncmp( source->name, "ios_", 4 )) return NULL; /* external iOS shims */\n')
+        p.write_text(s)
+        PY
+        git -C wine diff > output/wine-ci.patch
+      if: steps.native.outputs.cache-hit != 'true'
+    - name: Build Wine host tools and generated headers
+      run: |
+        mkdir -p wine/build-native
+        cd wine/build-native
+        ../configure --enable-win64 --without-x --disable-tests > "$GITHUB_WORKSPACE/wine-host-configure.log" 2>&1
+        make -j2 __tools__ > "$GITHUB_WORKSPACE/wine-host-tools.log" 2>&1
+        make -j2 include >> "$GITHUB_WORKSPACE/wine-host-tools.log" 2>&1
+        test -x tools/widl/widl
+      if: steps.native.outputs.cache-hit != 'true'
+    - name: Configure wine (build-macos, cross)
+      run: |
+        cd wine
+        mkdir -p build-macos
+        cd build-macos
+        ../configure --enable-win64 --disable-tests \
+          CC="xcrun -sdk iphoneos clang -arch arm64 -miphoneos-version-min=17.0" \
+          CROSSCC="xcrun -sdk iphoneos clang -arch arm64 -miphoneos-version-min=17.0" \
+          --host=aarch64-apple-darwin --build="$(uname -m)-apple-darwin" \
+          --with-wine-tools="$GITHUB_WORKSPACE/wine/build-native" \
+          --without-freetype --without-fontconfig \
+          --without-x --without-opengl --without-vulkan \
+          --without-gnutls --without-pcsclite --without-usb \
+          --without-v4l2 --without-gphoto --without-inotify \
+          --without-sane --without-pulse --without-alsa --without-oss \
+          --without-capi --without-cups --without-krb5 --without-ldap \
+          --without-netapi --without-sdl --without-udev --without-unwind \
+          > "$GITHUB_WORKSPACE/wine-configure.log" 2>&1
+      if: steps.native.outputs.cache-hit != 'true'
+    - name: Generate cross-tree headers and patch config.h for iOS SDK
+      shell: bash
+      run: |
+        make -C wine/build-macos include -j"$(sysctl -n hw.ncpu)" > "$GITHUB_WORKSPACE/make-include.log" 2>&1
+        cp -n wine/build-native/include/*.h wine/build-macos/include/ 2>/dev/null || true
+        CFG=wine/build-macos/include/config.h
+        {
+          echo ""
+          echo "/* iOS SDK fixups appended by CI */"
+          echo "#undef HAVE_GETATTRLIST"
+          echo "#ifndef D_TAPE"
+          echo "#define D_TAPE 1"
+          echo "#endif"
+          echo "#ifndef D_DISK"
+          echo "#define D_DISK 2"
+          echo "#endif"
+          echo "#ifndef D_TTY"
+          echo "#define D_TTY 3"
+          echo "#endif"
+          echo ""
+          echo "/* Wine configure runs --without-gnutls here (the host has no"
+          echo " * gnutls for the iOS sysroot), so config.h defines neither of"
+          echo " * these. But dlls/bcrypt/gnutls.c is wrapped head-to-toe in"
+          echo " * #ifdef HAVE_GNUTLS_CIPHER_INIT and dlls/secur32/schannel_gnutls.c"
+          echo " * in #ifdef SONAME_LIBGNUTLS -- undefined, both compile to an"
+          echo " * EMPTY object, __wine_unix_call_funcs is never emitted, and the"
+          echo " * app link dies on _bcrypt_unix_call_funcs / _secur32_unix_call_funcs."
+          echo " * We link toolchains/gnutls-ios statically and ios_gnutls_shim.h"
+          echo " * rewrites dlopen/dlsym onto a static symtab, so the soname string"
+          echo " * is only ever pattern-matched, never actually dlopen()ed. */"
+          echo "#ifndef SONAME_LIBGNUTLS"
+          echo "#define SONAME_LIBGNUTLS \"libgnutls.so.30\""
+          echo "#endif"
+          echo "#ifndef HAVE_GNUTLS_CIPHER_INIT"
+          echo "#define HAVE_GNUTLS_CIPHER_INIT 1"
+          echo "#endif"
+        } >> "$CFG"
+        if [ -f wine/build-macos/include/dwrite.h ]; then
+          echo "::notice::dwrite.h present in cross tree"
+        else
+          echo "::error::dwrite.h STILL MISSING"
+          LS=$(ls wine/build-native/include/ 2>&1 | head -40 | python3 -c "import sys; print('%0A'.join(sys.stdin.read().splitlines()))")
+          echo "::error::native include dir :: $LS"
+          T=$(tail -n 20 "$GITHUB_WORKSPACE/make-include.log" 2>/dev/null | python3 -c "import sys; print('%0A'.join(sys.stdin.read().splitlines()))")
+          echo "::error::make include tail :: $T"
+        fi
+
+        test -s wine/build-macos/include/config.h
+        test -s wine/build-macos/include/dwrite.h
+      if: steps.native.outputs.cache-hit != 'true'
+    - name: Build iOS font, crypto and audio libraries
+      run: |
+        git clone --depth 1 --branch VER-2-13-3 https://github.com/freetype/freetype.git research/freetype
+        bash build/freetype-ios/build.sh 2>&1 | tee freetype.log
+        bash build/gnutls-ios/build.sh 2>&1 | tee gnutls.log
+        bash build/ffmpeg/build.sh 2>&1 | tee ffmpeg.log
+      if: steps.native.outputs.cache-hit != 'true'
+    - name: Build Wine iOS Windows API bridge
+      run: |
+        bash build/ntdll-unix/build.sh 2>&1 | tee ntdll.log
+      if: steps.native.outputs.cache-hit != 'true'
+    - name: Build the in-process Wine server base
+      run: |
+        SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+        BD="$GITHUB_WORKSPACE/build/wineserver"
+        OBJ="$BD/obj"
+        mkdir -p "$OBJ/base"
+        FLAGS=(-arch arm64 -isysroot "$SDK" -miphoneos-version-min=17.0 -O2
+          -I"$GITHUB_WORKSPACE/wine/include" -I"$GITHUB_WORKSPACE/wine/include/wine"
+          -I"$GITHUB_WORKSPACE/wine/build-macos/include"
+          -I"$BD" -I"$GITHUB_WORKSPACE/wine/server"
+          -I"$GITHUB_WORKSPACE/build/madsync" -DHAVE_LINUX_NTSYNC_H=1
+          -I"$GITHUB_WORKSPACE/build/ntdll-unix/shims"
+          -include "$BD/config_ios.h" -include stdarg.h
+          -include "$BD/unicode_fix.h" -include "$BD/wineserver_ios_kill.h"
+          -DBINDIR=\"/usr/local/bin\" -DDATADIR=\"/usr/local/share\"
+          -D__WINESRC__ -DWINE_IOS=1 -Dmain=wineserver_main
+          -Wno-implicit-function-declaration)
+        OK=0; BAD=0; BADLIST=""
+        for src in "$GITHUB_WORKSPACE"/wine/server/*.c; do
+          n=$(basename "$src" .c)
+          if xcrun -sdk iphoneos clang "${FLAGS[@]}" -c "$src" -o "$OBJ/base/$n.o" 2>"$OBJ/base/$n.err"; then
+            OK=$((OK+1))
+          else
+            BAD=$((BAD+1)); BADLIST="$BADLIST $n"
+          fi
+        done
+        echo "base compile: $OK ok, $BAD failed:$BADLIST"
+        echo "::notice::base wineserver compile :: $OK ok, $BAD failed:$BADLIST"
+        [ "$BAD" -eq 0 ] || { cat "$OBJ"/base/*.err; exit 1; }
+        ar rcs "$OBJ/libwineserver.a" "$OBJ"/base/*.o
+        echo "::notice::base libwineserver.a $(wc -c < "$OBJ/libwineserver.a" | tr -d ' ') bytes"
+      if: steps.native.outputs.cache-hit != 'true'
+    - name: Build iOS server and window-system adapters
+      run: |
+        bash build/wineserver/build.sh 2>&1 | tee wineserver.log
+        bash build/win32u-unix/build.sh 2>&1 | tee win32u.log
+      if: steps.native.outputs.cache-hit != 'true'
+    - name: Build FEX native iOS CPU translator libraries
+      run: |
+        cmake -S FEX -B FEX/build-ios -G Ninja \
+          -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+          -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
+          -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=17.0 \
+          -DCMAKE_BUILD_TYPE=Release -DCMAKE_MACOSX_BUNDLE=OFF \
+          -DBUILD_TESTING=OFF -DBUILD_THUNKS=OFF -DBUILD_FEXCONFIG=OFF \
+          -DBUILD_FEX_LINUX_TESTS=OFF -DENABLE_FEX_ALLOCATOR=OFF \
+          -DENABLE_ASSERTIONS=OFF -DENABLE_CLANG_THUNKS=ON \
+          -DENABLE_LTO=OFF -DENABLE_CCACHE=OFF \
+          -DTUNE_CPU=generic -DTUNE_ARCH=generic -DCMAKE_DISABLE_FIND_PACKAGE_fmt=ON \
+          2>&1 | tee fex-configure.log
+        cmake --build FEX/build-ios -j2 --target FEXCore FEXCore_Base JemallocLibs cephes_128bit softfloat_3e fmt xxhash 2>&1 | tee fex-build.log
+      if: steps.native.outputs.cache-hit != 'true'
+    - name: Build Direct3D-to-Metal adapter and shader translator
+      run: |
+        xcodebuild -downloadComponent MetalToolchain
+        bash build/dxmt-ios/build.sh 2>&1 | tee dxmt.log
+        xcrun -sdk iphoneos libtool -static -o app/Madeira/libdxmt_combined.a \
+          build/dxmt-ios/obj/*.o toolchains/llvm-ios-build/lib/*.a
+        bash build/rppairing-ios/build.sh 2>&1 | tee pairing.log
+        bash build/madeira-dock/build.sh --check 2>&1 | tee dock.log
+      if: steps.native.outputs.cache-hit != 'true'
+    - name: Verify required runtime archives and PE modules
+      run: |
+        python3 - <<'PY'
+        from pathlib import Path
+        import re
+        root=Path('app/Madeira')
+        s=Path('app/Madeira.xcodeproj/project.pbxproj').read_text()
+        paths=re.findall(r'isa = PBXFileReference; lastKnownFileType = archive.ar;.*?path = "?([^;"\n]+)"?;',s)
+        missing=[str(root/p) for p in paths if not (root/p).is_file()]
+        for n in ['ntdll.dll','kernel32.dll','kernelbase.dll','d3d11.dll','dxgi.dll','winemetal.dll','xtajit64.dll','dockhost.exe']:
+            if not (root/'arm64ec-windows'/n).is_file(): missing.append(n)
+        if missing: raise SystemExit('Missing runtime inputs: '+', '.join(missing))
+        print('Verified',len(paths),'native archives and required PE modules')
+        PY
+    - uses: actions/cache/save@v5
+      if: steps.native.outputs.cache-hit != 'true'
+      with:
+        path: |-
+          app/Madeira/*.a
+          app/Madeira/arm64ec-windows/dockhost.exe
+          app/Madeira/arm64ec-windows/dock-notices.txt
+          app/Madeira/legal/LICENSES-rppairing-crates.txt
+          FEX/build-ios
+        key: pocket-native-v1-279fd0f-${{ steps.sdk.outputs.id }}
+    - name: Generate and cross-compile a real x64 Windows smoke test
+      run: |
+        cat > output/pocket-smoke.c <<'C'
+        #include <windows.h>
+        int WINAPI WinMain(HINSTANCE a,HINSTANCE b,LPSTR c,int d) {
+            (void)a; (void)b; (void)c; (void)d;
+            HANDLE f=CreateFileA("pocket-smoke-result.txt",GENERIC_WRITE,0,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
+            if(f==INVALID_HANDLE_VALUE) {
+                MessageBoxA(0,"Windows code ran, but the current directory is not writable.","Pocket runtime test",MB_OK|MB_ICONWARNING);
+                return 2;
+            }
+            const char text[]="x64 instructions and Win32 file I/O executed. This does not test Direct3D or Steam.\r\n";
+            DWORD n=0; BOOL ok=WriteFile(f,text,sizeof(text)-1,&n,0); CloseHandle(f);
+            MessageBoxA(0,ok?"x64 execution and file write passed. Next: test a small Direct3D game.":"x64 execution passed; file write failed.","Pocket runtime test",MB_OK);
+            return ok?0:3;
+        }
+        C
+        x86_64-w64-mingw32-clang -O2 -mwindows output/pocket-smoke.c -o output/pocket-smoke.exe -luser32
+        file output/pocket-smoke.exe
+    - name: Prepare resources, notices and build identity
+      run: |
+        # No Microsoft runtime DLLs are silently supplied or substituted.
+        mkdir -p app/Madeira/x86_64-vcruntime
+        bash build/stage-licenses.sh
+        python3 - <<'PY'
+        import plistlib,os
+        from pathlib import Path
+        p=Path('app/Madeira/Info.plist');d=plistlib.loads(p.read_bytes())
+        d['CFBundleDisplayName']='Pocket Windows Lab'
+        d['CFBundleVersion']=os.environ['GITHUB_RUN_NUMBER']
+        p.write_bytes(plistlib.dumps(d))
+        PY
+        cat > output/READ-ME.txt <<'TXT'
+        EXPERIMENTAL BUILD: Pocket Windows Lab, based on willfaust/Madeira.
+        Not Proton, not a full emulator hub, and not an App Store build.
+        Pinned upstream: 279fd0f83170425db002fe25d6bd62f6355f497d.
+        Native iOS libraries are compiled here; existing upstream PE DLLs and StikJIT framework are reused.
+        No claim of game compatibility or on-device validation is made by a successful build.
+        Sideload with a compatible signer; enable JIT and check Madeira's Memory+ readiness.
+        Unsigned IPA creation does not grant JIT or memory entitlements.
+        Import pocket-smoke.exe into the app's game library and launch it first.
+        A successful dialog tests x64 code and basic Win32 I/O, NOT Direct3D or Steam.
+        Some games need Microsoft's VC++ runtime, installed separately in the guest environment.
+        Epic integration, ES-DE scraping, BIOS setup and the unified emulator hub are not included.
+        Keep this workflow and upstream sources/notices with any redistributed derivative.
+        TXT
+    - name: Compile the experimental iOS application
+      run: |
+        xcodebuild -project app/Madeira.xcodeproj -scheme Madeira \
+          -sdk iphoneos -configuration Debug -destination 'generic/platform=iOS' \
+          -derivedDataPath build-out/DerivedData \
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM= \
+          IPHONEOS_DEPLOYMENT_TARGET=26.0 \
+          MADEIRA_BUNDLE_IDENTIFIER=com.pocketarcade.windowslab \
+          build 2>&1 | tee archive.log
+    - name: Check graphics exports and package unsigned IPA
+      run: |
+        APP=build-out/DerivedData/Build/Products/Debug-iphoneos/Madeira.app
+        test -s "$APP/Madeira"
+        xcrun dyld_info -exports "$APP/Madeira" > output/exports.txt
+        for sym in macdrv_functions get_win_data release_win_data macdrv_view_create_metal_view macdrv_view_get_metal_layer macdrv_view_release_metal_view; do
+          grep -qE "_${sym}$" output/exports.txt || { echo "::error::Missing graphics export $sym"; exit 1; }
+        done
+        mkdir -p build-out/Payload
+        ditto "$APP" build-out/Payload/Madeira.app
+        (cd build-out && zip -qry ../output/PocketWindowsLab-unsigned.ipa Payload)
+        unzip -tq output/PocketWindowsLab-unsigned.ipa
+        cp LICENSE COPYING LICENSE-EXCEPTION.md THIRD-PARTY-NOTICES.md output/
+        git diff --binary > output/application-ci.patch
+        cp app/Madeira/Madeira.entitlements output/reference-entitlements.plist
+        cd output
+        shasum -a 256 PocketWindowsLab-unsigned.ipa pocket-smoke.exe > SHA256SUMS.txt
+    - uses: actions/upload-artifact@v7
+      with:
+        name: PocketWindowsLab-iOS-experimental
+        path: output/
+        if-no-files-found: error
+        retention-days: 14
+    - uses: actions/upload-artifact@v7
+      if: failure()
+      with:
+        name: PocketWindowsLab-failure-logs
+        path: |-
+          *.log
+          build/**/*.err
+          build/**/err-*.txt
+          output/*.txt
+        if-no-files-found: warn
+        retention-days: 14
+'on':
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+  workflow_dispatch:
+    inputs:
+      build_full_hub:
+        description: Also build the earlier hub template (requires mobile/, server/, ci/ sources)
+        type: boolean
+        default: false
