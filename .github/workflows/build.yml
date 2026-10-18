@@ -791,8 +791,7 @@ jobs:
       shell: bash
       run: |
         # cache-source: wineheaders
-        make -C wine/build-macos include -j"$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/make-include.log"
-        cp -n wine/build-native/include/*.h wine/build-macos/include/ 2>/dev/null || true
+        make -C wine/build-macos -j2 include/all 2>&1 | tee "$GITHUB_WORKSPACE/make-include.log"
         CFG=wine/build-macos/include/config.h
         {
           echo ""
@@ -825,18 +824,17 @@ jobs:
           echo "#define HAVE_GNUTLS_CIPHER_INIT 1"
           echo "#endif"
         } >> "$CFG"
-        if [ -f wine/build-macos/include/dwrite.h ]; then
-          echo "::notice::dwrite.h present in cross tree"
-        else
-          echo "::error::dwrite.h STILL MISSING"
-          LS=$(ls wine/build-native/include/ 2>&1 | head -40 | python3 -c "import sys; print('%0A'.join(sys.stdin.read().splitlines()))")
-          echo "::error::native include dir :: $LS"
-          T=$(tail -n 20 "$GITHUB_WORKSPACE/make-include.log" 2>/dev/null | python3 -c "import sys; print('%0A'.join(sys.stdin.read().splitlines()))")
-          echo "::error::make include tail :: $T"
-        fi
-
-        test -s wine/build-macos/include/config.h
-        test -s wine/build-macos/include/dwrite.h
+        # Require the actual IDL-generated headers consumed by the iOS adapters.
+        python3 - <<'PYHEADERS'
+        from pathlib import Path
+        root=Path('wine/build-macos/include')
+        required=['config.h','dwrite.h','dwrite_3.h']
+        missing=[name for name in required if not (root/name).is_file() or (root/name).stat().st_size==0]
+        if missing:
+            print('Generated include files:', ', '.join(sorted(p.name for p in root.glob('*.h'))))
+            raise SystemExit('Missing generated Wine headers: '+', '.join(missing))
+        print('Verified generated Wine headers:', ', '.join(required))
+        PYHEADERS
       if: steps.cache_wineheaders.outputs.cache-hit != 'true'
     - name: Save completed wineheaders
       uses: actions/cache/save@v5
