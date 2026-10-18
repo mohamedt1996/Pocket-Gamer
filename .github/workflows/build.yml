@@ -5,6 +5,7 @@
 # Embedded source is checksum-verified and published as PocketArcade-sources.
 # iOS compilation and on-device play are not yet verified by the author.
 # Legacy Flutter jobs remain opt-in and require your own mobile project sources.
+# Successful dependencies are saved individually; cache keys hash their source and build recipes.
 name: Pocket Arcade - iOS hub and Ubuntu companion
 permissions:
   contents: read
@@ -349,10 +350,20 @@ jobs:
       with:
         name: PocketArcade-sources
         path: pocket-additions
+    - uses: actions/cache/restore@v5
+      id: companioncache
+      with:
+        path: pocket-image/pocket-companion-image.tar.gz
+        key: pocket-companion-amd64-v1-${{ hashFiles('pocket-additions/server/Dockerfile', 'pocket-additions/server/server.py',
+          'pocket-additions/server/.dockerignore') }}
     - name: Build Ubuntu amd64 image and test authenticated health endpoint
       run: |
         set -euo pipefail
-        docker build -t pocket-companion:local pocket-additions/server
+        if [[ -s pocket-image/pocket-companion-image.tar.gz ]]; then
+          docker load -i pocket-image/pocket-companion-image.tar.gz
+        else
+          docker build -t pocket-companion:local pocket-additions/server
+        fi
         export POCKET_TOKEN="$(openssl rand -hex 32)"
         cid=$(docker run -d -e POCKET_TOKEN -p 127.0.0.1:8088:8088 pocket-companion:local)
         trap 'docker rm -f "$cid" >/dev/null' EXIT
@@ -374,9 +385,19 @@ jobs:
         PY
         mkdir -p output/companion
         cp -R pocket-additions/server/. output/companion/
-        docker save pocket-companion:local | gzip -1 > output/companion/pocket-companion-image.tar.gz
+        mkdir -p pocket-image
+        if [[ ! -s pocket-image/pocket-companion-image.tar.gz ]]; then
+          docker save pocket-companion:local | gzip -1 > pocket-image/pocket-companion-image.tar.gz
+        fi
+        cp pocket-image/pocket-companion-image.tar.gz output/companion/
         cp pocket-additions/README.md output/
         (cd output/companion && sha256sum pocket-companion-image.tar.gz > SHA256SUMS.txt)
+    - uses: actions/cache/save@v5
+      if: steps.companioncache.outputs.cache-hit != 'true'
+      with:
+        path: pocket-image/pocket-companion-image.tar.gz
+        key: pocket-companion-amd64-v1-${{ hashFiles('pocket-additions/server/Dockerfile', 'pocket-additions/server/server.py',
+          'pocket-additions/server/.dockerignore') }}
     - uses: actions/upload-artifact@v7
       with:
         name: PocketArcade-Ubuntu-companion-amd64
@@ -563,6 +584,7 @@ jobs:
         git rev-parse HEAD >> output/SOURCE-REVISIONS.txt
     - name: Install compilation tools
       run: |
+        # cache-toolchain
         brew install bison ninja meson cmake llvm lld ccache pkg-config autoconf automake libtool
         echo "$(brew --prefix bison)/bin" >> "$GITHUB_PATH"
         echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
@@ -591,29 +613,60 @@ jobs:
     - name: Add cross compiler to PATH
       run: |
         echo "$GITHUB_WORKSPACE/toolchains/llvm-mingw-20260421-ucrt-macos-universal/bin" >> "$GITHUB_PATH"
-    - uses: actions/cache/restore@v5
-      id: native
+    - uses: actions/checkout@v7
       with:
-        path: |-
-          app/Madeira/*.a
-          app/Madeira/arm64ec-windows/dockhost.exe
-          app/Madeira/arm64ec-windows/dock-notices.txt
-          app/Madeira/legal/LICENSES-rppairing-crates.txt
-          FEX/build-ios
-        key: pocket-native-v1-279fd0f-${{ steps.sdk.outputs.id }}
+        path: pocket-workflow
+        persist-credentials: false
+    - name: Compute per-dependency source and build-recipe keys
+      id: cachekeys
+      env:
+        SDK_ID: ${{ steps.sdk.outputs.id }}
+      run: |
+        python3 - <<'PYKEYS'
+        import hashlib,json,os,re,subprocess
+        from pathlib import Path
+        meta={'llvm': {'inputs': [], 'deps': []}, 'winehost': {'inputs': ['wine'], 'deps': []}, 'wineheaders': {'inputs': ['wine'], 'deps': ['winehost']}, 'freetype': {'inputs': ['build/freetype-ios'], 'deps': []}, 'gnutls': {'inputs': ['build/gnutls-ios'], 'deps': []}, 'ffmpeg': {'inputs': ['build/ffmpeg'], 'deps': []}, 'ntdll': {'inputs': ['wine', 'build/ntdll-unix', 'build/crypto', 'build/madsync', 'build/ffmpeg'], 'deps': ['wineheaders', 'freetype', 'gnutls', 'ffmpeg']}, 'serverbase': {'inputs': ['wine', 'build/wineserver', 'build/madsync', 'build/ntdll-unix'], 'deps': ['wineheaders']}, 'serveradapter': {'inputs': ['wine', 'build/wineserver', 'build/madsync'], 'deps': ['serverbase']}, 'window': {'inputs': ['wine', 'build/win32u-unix', 'build/ntdll-unix'], 'deps': ['wineheaders', 'freetype']}, 'fex': {'inputs': ['FEX'], 'deps': []}, 'dxmt': {'inputs': ['dxmt', 'build/dxmt-ios', 'wine'], 'deps': ['wineheaders', 'llvm']}, 'pairing': {'inputs': ['build/rppairing-ios'], 'deps': []}, 'dock': {'inputs': ['madeira-dock', 'build/madeira-dock'], 'deps': []}}
+        # Read the workflow from the user's repository, not from the upstream runtime checkout.
+        workflow_path='/'.join(os.environ['GITHUB_WORKFLOW_REF'].split('@',1)[0].split('/')[2:])
+        text=(Path('pocket-workflow')/workflow_path).read_text()
+        recipes={k:[] for k in meta}
+        common_recipe=[]
+        for match in re.finditer(r'^      run: [|][^\n]*\n((?:        [^\n]*\n|\n)*)',text,re.M):
+            body='\n'.join(line[8:] if line.startswith('        ') else line for line in match.group(1).splitlines())+'\n'
+            if body.startswith('# cache-toolchain\n'):common_recipe.append(body)
+            marker=re.search(r'^# cache-source: ([a-z]+)$',body,re.M)
+            if marker and marker.group(1) in recipes:recipes[marker.group(1)].append(body)
+        keys={}
+        for key,item in meta.items():
+            if not recipes[key]:raise SystemExit('No build recipe found for '+key)
+            source=subprocess.check_output(['git','ls-tree','-r','HEAD','--',*item['inputs']]) if item['inputs'] else b''
+            recipe=''.join(recipes[key])
+            dependencies=[keys[x] for x in item['deps']]
+            digest=hashlib.sha256(source+recipe.encode()+''.join(common_recipe).encode()+json.dumps(dependencies).encode()).hexdigest()[:24]
+            keys[key]='pocket-component-v1-'+key+'-'+os.environ['SDK_ID']+'-'+digest
+        # No broad fallback: old outputs may be incompatible. This one is the known successful LLVM build.
+        legacy=''
+        if hashlib.sha256((''.join(recipes['llvm'])+''.join(common_recipe)).encode()).hexdigest()=='e8cf6286a5c4ad579f0ed21fe342f6b63d00399e115f92efc113efe9620527a7':
+            legacy='pocket-llvm15-ios-v2-'+os.environ['SDK_ID']
+        with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+            for k,v in keys.items():f.write(k+'='+v+'\n')
+            f.write('llvmlegacy='+legacy+'\n')
+        print('Dependency cache keys prepared; unrelated application changes do not invalidate them.')
+        PYKEYS
     - uses: actions/cache/restore@v5
       id: llvmcache
-      if: steps.native.outputs.cache-hit != 'true'
       with:
         path: |-
           toolchains/llvm-project
           toolchains/llvm-ios-build
           toolchains/llvm-host-build
-        key: pocket-llvm15-ios-v2-${{ steps.sdk.outputs.id }}
+        key: ${{ steps.cachekeys.outputs.llvm }}
+        restore-keys: ${{ steps.cachekeys.outputs.llvmlegacy }}
     - name: Build LLVM 15.0.7 for iOS (two-stage, per build/dxmt-ios/README.md)
-      if: steps.native.outputs.cache-hit != 'true' && steps.llvmcache.outputs.cache-hit != 'true'
+      if: steps.llvmcache.outputs.cache-matched-key == ''
       shell: bash
       run: |
+        # cache-source: llvm
         git clone --depth 1 --branch llvmorg-15.0.7 \
           https://github.com/llvm/llvm-project.git toolchains/llvm-project
         # README: Apple ld rejects --gc-sections; make the Darwin branch cover iOS
@@ -663,15 +716,16 @@ jobs:
         cmake --build toolchains/llvm-ios-build -j"$(sysctl -n hw.ncpu)" \
           2>&1 | tee "$GITHUB_WORKSPACE/llvm-ios-build.log"
     - uses: actions/cache/save@v5
-      if: steps.native.outputs.cache-hit != 'true' && steps.llvmcache.outputs.cache-hit != 'true'
+      if: steps.llvmcache.outputs.cache-hit != 'true'
       with:
         path: |-
           toolchains/llvm-project
           toolchains/llvm-ios-build
           toolchains/llvm-host-build
-        key: pocket-llvm15-ios-v2-${{ steps.sdk.outputs.id }}
+        key: ${{ steps.cachekeys.outputs.llvm }}
     - name: Adapt Wine dependency scanning for external iOS shim headers
       run: |
+        # cache-source: winehost
         python3 - <<'PY'
         from pathlib import Path
         p=Path('wine/tools/makedep.c');s=p.read_text()
@@ -685,18 +739,37 @@ jobs:
         p.write_text(s)
         PY
         git -C wine diff > output/wine-ci.patch
-      if: steps.native.outputs.cache-hit != 'true'
+    - name: Restore winehost
+      uses: actions/cache/restore@v5
+      id: cache_winehost
+      with:
+        path: wine/build-native
+        key: ${{ steps.cachekeys.outputs.winehost }}
     - name: Build Wine host tools and generated headers
       run: |
+        # cache-source: winehost
         mkdir -p wine/build-native
         cd wine/build-native
-        ../configure --enable-win64 --without-x --disable-tests > "$GITHUB_WORKSPACE/wine-host-configure.log" 2>&1
-        make -j2 __tools__ > "$GITHUB_WORKSPACE/wine-host-tools.log" 2>&1
-        make -j2 include >> "$GITHUB_WORKSPACE/wine-host-tools.log" 2>&1
+        ../configure --enable-win64 --without-x --disable-tests 2>&1 | tee "$GITHUB_WORKSPACE/wine-host-configure.log"
+        make -j2 tools/widl/widl tools/wrc/wrc tools/winebuild/winebuild tools/winegcc/winegcc 2>&1 | tee "$GITHUB_WORKSPACE/wine-host-tools.log"
+        make -j2 include 2>&1 | tee -a "$GITHUB_WORKSPACE/wine-host-tools.log"
         test -x tools/widl/widl
-      if: steps.native.outputs.cache-hit != 'true'
+      if: steps.cache_winehost.outputs.cache-hit != 'true'
+    - name: Save completed winehost
+      uses: actions/cache/save@v5
+      if: steps.cache_winehost.outputs.cache-hit != 'true'
+      with:
+        path: wine/build-native
+        key: ${{ steps.cachekeys.outputs.winehost }}
+    - name: Restore wineheaders
+      uses: actions/cache/restore@v5
+      id: cache_wineheaders
+      with:
+        path: wine/build-macos
+        key: ${{ steps.cachekeys.outputs.wineheaders }}
     - name: Configure wine (build-macos, cross)
       run: |
+        # cache-source: wineheaders
         cd wine
         mkdir -p build-macos
         cd build-macos
@@ -712,12 +785,13 @@ jobs:
           --without-sane --without-pulse --without-alsa --without-oss \
           --without-capi --without-cups --without-krb5 --without-ldap \
           --without-netapi --without-sdl --without-udev --without-unwind \
-          > "$GITHUB_WORKSPACE/wine-configure.log" 2>&1
-      if: steps.native.outputs.cache-hit != 'true'
+          2>&1 | tee "$GITHUB_WORKSPACE/wine-configure.log"
+      if: steps.cache_wineheaders.outputs.cache-hit != 'true'
     - name: Generate cross-tree headers and patch config.h for iOS SDK
       shell: bash
       run: |
-        make -C wine/build-macos include -j"$(sysctl -n hw.ncpu)" > "$GITHUB_WORKSPACE/make-include.log" 2>&1
+        # cache-source: wineheaders
+        make -C wine/build-macos include -j"$(sysctl -n hw.ncpu)" 2>&1 | tee "$GITHUB_WORKSPACE/make-include.log"
         cp -n wine/build-native/include/*.h wine/build-macos/include/ 2>/dev/null || true
         CFG=wine/build-macos/include/config.h
         {
@@ -763,20 +837,105 @@ jobs:
 
         test -s wine/build-macos/include/config.h
         test -s wine/build-macos/include/dwrite.h
-      if: steps.native.outputs.cache-hit != 'true'
-    - name: Build iOS font, crypto and audio libraries
+      if: steps.cache_wineheaders.outputs.cache-hit != 'true'
+    - name: Save completed wineheaders
+      uses: actions/cache/save@v5
+      if: steps.cache_wineheaders.outputs.cache-hit != 'true'
+      with:
+        path: wine/build-macos
+        key: ${{ steps.cachekeys.outputs.wineheaders }}
+    - name: Restore freetype
+      uses: actions/cache/restore@v5
+      id: cache_freetype
+      with:
+        path: |-
+          research/freetype
+          build/freetype-ios/build
+        key: ${{ steps.cachekeys.outputs.freetype }}
+    - name: Build FreeType
       run: |
+        # cache-source: freetype
         git clone --depth 1 --branch VER-2-13-3 https://github.com/freetype/freetype.git research/freetype
         bash build/freetype-ios/build.sh 2>&1 | tee freetype.log
+      if: steps.cache_freetype.outputs.cache-hit != 'true'
+    - name: Save completed freetype
+      uses: actions/cache/save@v5
+      if: steps.cache_freetype.outputs.cache-hit != 'true'
+      with:
+        path: |-
+          research/freetype
+          build/freetype-ios/build
+        key: ${{ steps.cachekeys.outputs.freetype }}
+    - name: Restore gnutls
+      uses: actions/cache/restore@v5
+      id: cache_gnutls
+      with:
+        path: toolchains/gnutls-ios
+        key: ${{ steps.cachekeys.outputs.gnutls }}
+    - name: Build GnuTLS
+      run: |
+        # cache-source: gnutls
         bash build/gnutls-ios/build.sh 2>&1 | tee gnutls.log
+      if: steps.cache_gnutls.outputs.cache-hit != 'true'
+    - name: Save completed gnutls
+      uses: actions/cache/save@v5
+      if: steps.cache_gnutls.outputs.cache-hit != 'true'
+      with:
+        path: toolchains/gnutls-ios
+        key: ${{ steps.cachekeys.outputs.gnutls }}
+    - name: Restore ffmpeg
+      uses: actions/cache/restore@v5
+      id: cache_ffmpeg
+      with:
+        path: |-
+          toolchains/ffmpeg-ios
+          app/Madeira/libavformat.a
+          app/Madeira/libavcodec.a
+          app/Madeira/libswresample.a
+          app/Madeira/libavutil.a
+        key: ${{ steps.cachekeys.outputs.ffmpeg }}
+    - name: Build FFmpeg
+      run: |
+        # cache-source: ffmpeg
         bash build/ffmpeg/build.sh 2>&1 | tee ffmpeg.log
-      if: steps.native.outputs.cache-hit != 'true'
+      if: steps.cache_ffmpeg.outputs.cache-hit != 'true'
+    - name: Save completed ffmpeg
+      uses: actions/cache/save@v5
+      if: steps.cache_ffmpeg.outputs.cache-hit != 'true'
+      with:
+        path: |-
+          toolchains/ffmpeg-ios
+          app/Madeira/libavformat.a
+          app/Madeira/libavcodec.a
+          app/Madeira/libswresample.a
+          app/Madeira/libavutil.a
+        key: ${{ steps.cachekeys.outputs.ffmpeg }}
+    - name: Restore ntdll
+      uses: actions/cache/restore@v5
+      id: cache_ntdll
+      with:
+        path: app/Madeira/libntdll_unix.a
+        key: ${{ steps.cachekeys.outputs.ntdll }}
     - name: Build Wine iOS Windows API bridge
       run: |
+        # cache-source: ntdll
         bash build/ntdll-unix/build.sh 2>&1 | tee ntdll.log
-      if: steps.native.outputs.cache-hit != 'true'
+      if: steps.cache_ntdll.outputs.cache-hit != 'true'
+    - name: Save completed ntdll
+      uses: actions/cache/save@v5
+      if: steps.cache_ntdll.outputs.cache-hit != 'true'
+      with:
+        path: app/Madeira/libntdll_unix.a
+        key: ${{ steps.cachekeys.outputs.ntdll }}
+    - name: Restore serverbase
+      uses: actions/cache/restore@v5
+      id: cache_serverbase
+      with:
+        path: build/wineserver/obj/libwineserver.a
+        key: ${{ steps.cachekeys.outputs.serverbase }}
     - name: Build the in-process Wine server base
       run: |
+        # cache-source: serverbase
         SDK=$(xcrun --sdk iphoneos --show-sdk-path)
         BD="$GITHUB_WORKSPACE/build/wineserver"
         OBJ="$BD/obj"
@@ -806,14 +965,56 @@ jobs:
         [ "$BAD" -eq 0 ] || { cat "$OBJ"/base/*.err; exit 1; }
         ar rcs "$OBJ/libwineserver.a" "$OBJ"/base/*.o
         echo "::notice::base libwineserver.a $(wc -c < "$OBJ/libwineserver.a" | tr -d ' ') bytes"
-      if: steps.native.outputs.cache-hit != 'true'
-    - name: Build iOS server and window-system adapters
+      if: steps.cache_serverbase.outputs.cache-hit != 'true'
+    - name: Save completed serverbase
+      uses: actions/cache/save@v5
+      if: steps.cache_serverbase.outputs.cache-hit != 'true'
+      with:
+        path: build/wineserver/obj/libwineserver.a
+        key: ${{ steps.cachekeys.outputs.serverbase }}
+    - name: Restore serveradapter
+      uses: actions/cache/restore@v5
+      id: cache_serveradapter
+      with:
+        path: app/Madeira/libwineserver.a
+        key: ${{ steps.cachekeys.outputs.serveradapter }}
+    - name: Build Wine server adapter
       run: |
+        # cache-source: serveradapter
         bash build/wineserver/build.sh 2>&1 | tee wineserver.log
+      if: steps.cache_serveradapter.outputs.cache-hit != 'true'
+    - name: Save completed serveradapter
+      uses: actions/cache/save@v5
+      if: steps.cache_serveradapter.outputs.cache-hit != 'true'
+      with:
+        path: app/Madeira/libwineserver.a
+        key: ${{ steps.cachekeys.outputs.serveradapter }}
+    - name: Restore window
+      uses: actions/cache/restore@v5
+      id: cache_window
+      with:
+        path: app/Madeira/libwin32u_unix.a
+        key: ${{ steps.cachekeys.outputs.window }}
+    - name: Build Wine window adapter
+      run: |
+        # cache-source: window
         bash build/win32u-unix/build.sh 2>&1 | tee win32u.log
-      if: steps.native.outputs.cache-hit != 'true'
+      if: steps.cache_window.outputs.cache-hit != 'true'
+    - name: Save completed window
+      uses: actions/cache/save@v5
+      if: steps.cache_window.outputs.cache-hit != 'true'
+      with:
+        path: app/Madeira/libwin32u_unix.a
+        key: ${{ steps.cachekeys.outputs.window }}
+    - name: Restore fex
+      uses: actions/cache/restore@v5
+      id: cache_fex
+      with:
+        path: FEX/build-ios
+        key: ${{ steps.cachekeys.outputs.fex }}
     - name: Build FEX native iOS CPU translator libraries
       run: |
+        # cache-source: fex
         cmake -S FEX -B FEX/build-ios -G Ninja \
           -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
           -DCMAKE_OSX_SYSROOT="$(xcrun --sdk iphoneos --show-sdk-path)" \
@@ -826,16 +1027,75 @@ jobs:
           -DTUNE_CPU=generic -DTUNE_ARCH=generic -DCMAKE_DISABLE_FIND_PACKAGE_fmt=ON \
           2>&1 | tee fex-configure.log
         cmake --build FEX/build-ios -j2 --target FEXCore FEXCore_Base JemallocLibs cephes_128bit softfloat_3e fmt xxhash 2>&1 | tee fex-build.log
-      if: steps.native.outputs.cache-hit != 'true'
+      if: steps.cache_fex.outputs.cache-hit != 'true'
+    - name: Save completed fex
+      uses: actions/cache/save@v5
+      if: steps.cache_fex.outputs.cache-hit != 'true'
+      with:
+        path: FEX/build-ios
+        key: ${{ steps.cachekeys.outputs.fex }}
+    - name: Restore dxmt
+      uses: actions/cache/restore@v5
+      id: cache_dxmt
+      with:
+        path: app/Madeira/libdxmt_combined.a
+        key: ${{ steps.cachekeys.outputs.dxmt }}
     - name: Build Direct3D-to-Metal adapter and shader translator
       run: |
+        # cache-source: dxmt
         xcodebuild -downloadComponent MetalToolchain
         bash build/dxmt-ios/build.sh 2>&1 | tee dxmt.log
         xcrun -sdk iphoneos libtool -static -o app/Madeira/libdxmt_combined.a \
           build/dxmt-ios/obj/*.o toolchains/llvm-ios-build/lib/*.a
+      if: steps.cache_dxmt.outputs.cache-hit != 'true'
+    - name: Save completed dxmt
+      uses: actions/cache/save@v5
+      if: steps.cache_dxmt.outputs.cache-hit != 'true'
+      with:
+        path: app/Madeira/libdxmt_combined.a
+        key: ${{ steps.cachekeys.outputs.dxmt }}
+    - name: Restore pairing
+      uses: actions/cache/restore@v5
+      id: cache_pairing
+      with:
+        path: |-
+          app/Madeira/libmadeira_rppairing.a
+          app/Madeira/legal/LICENSES-rppairing-crates.txt
+        key: ${{ steps.cachekeys.outputs.pairing }}
+    - name: Build pairing library
+      run: |
+        # cache-source: pairing
         bash build/rppairing-ios/build.sh 2>&1 | tee pairing.log
+      if: steps.cache_pairing.outputs.cache-hit != 'true'
+    - name: Save completed pairing
+      uses: actions/cache/save@v5
+      if: steps.cache_pairing.outputs.cache-hit != 'true'
+      with:
+        path: |-
+          app/Madeira/libmadeira_rppairing.a
+          app/Madeira/legal/LICENSES-rppairing-crates.txt
+        key: ${{ steps.cachekeys.outputs.pairing }}
+    - name: Restore dock
+      uses: actions/cache/restore@v5
+      id: cache_dock
+      with:
+        path: |-
+          app/Madeira/arm64ec-windows/dockhost.exe
+          app/Madeira/arm64ec-windows/dock-notices.txt
+        key: ${{ steps.cachekeys.outputs.dock }}
+    - name: Build Steam dock helper
+      run: |
+        # cache-source: dock
         bash build/madeira-dock/build.sh --check 2>&1 | tee dock.log
-      if: steps.native.outputs.cache-hit != 'true'
+      if: steps.cache_dock.outputs.cache-hit != 'true'
+    - name: Save completed dock
+      uses: actions/cache/save@v5
+      if: steps.cache_dock.outputs.cache-hit != 'true'
+      with:
+        path: |-
+          app/Madeira/arm64ec-windows/dockhost.exe
+          app/Madeira/arm64ec-windows/dock-notices.txt
+        key: ${{ steps.cachekeys.outputs.dock }}
     - name: Verify required runtime archives and PE modules
       run: |
         python3 - <<'PY'
@@ -850,16 +1110,6 @@ jobs:
         if missing: raise SystemExit('Missing runtime inputs: '+', '.join(missing))
         print('Verified',len(paths),'native archives and required PE modules')
         PY
-    - uses: actions/cache/save@v5
-      if: steps.native.outputs.cache-hit != 'true'
-      with:
-        path: |-
-          app/Madeira/*.a
-          app/Madeira/arm64ec-windows/dockhost.exe
-          app/Madeira/arm64ec-windows/dock-notices.txt
-          app/Madeira/legal/LICENSES-rppairing-crates.txt
-          FEX/build-ios
-        key: pocket-native-v1-279fd0f-${{ steps.sdk.outputs.id }}
     - uses: actions/checkout@v7
       with:
         repository: libretro/SameBoy
@@ -870,7 +1120,8 @@ jobs:
       id: pocketcore
       with:
         path: pocket-core-cache/libpocket_sameboy.a
-        key: pocket-sameboy-v1-aa158a88-${{ steps.sdk.outputs.id }}
+        key: pocket-sameboy-v1-aa158a88-${{ steps.sdk.outputs.id }}-${{ hashFiles('pocket-additions/build_gb.sh')
+          }}
     - name: Integrate hub and build embedded GB/GBC engine
       run: |
         python3 pocket-additions/integrate.py
