@@ -1,0 +1,111 @@
+name: Pocket Arcade - Publish Release
+
+on:
+  workflow_run:
+    workflows:
+      - Pocket Arcade - iOS hub and Ubuntu companion
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: 'Successful build workflow run ID containing PocketArcade-iOS-experimental'
+        required: true
+        type: string
+      tag:
+        description: 'Optional release tag (defaults to build-<run ID>)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: pocket-arcade-release-${{ github.event.workflow_run.id || inputs.build_run_id }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.event != 'pull_request')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id || inputs.build_run_id }}
+      REQUESTED_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Verify source build and download artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/actions/runs/$RUN_ID" > run.json
+          python3 - <<'PY'
+          import json,os
+          run=json.load(open('run.json'))
+          assert run['conclusion']=='success', 'Build run was not successful'
+          assert run['head_repository']['full_name'].lower()==os.environ['GH_REPO'].lower(), 'Fork build rejected'
+          assert run['head_branch']=='main', 'Only main builds can be released'
+          assert run['event']!='pull_request', 'Pull request builds cannot be released'
+          with open(os.environ['GITHUB_ENV'],'a') as f:
+              f.write('BUILD_SHA='+run['head_sha']+'\n')
+          PY
+          mkdir -p artifacts
+          gh run download "$RUN_ID" --repo "$GH_REPO" --name PocketArcade-iOS-experimental --dir artifacts
+          find artifacts -maxdepth 2 -type f -print
+
+      - name: Validate IPA, smoke test and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd artifacts
+          test -s PocketArcade-unsigned.ipa
+          test -s pocket-smoke.exe
+          unzip -tq PocketArcade-unsigned.ipa
+          unzip -Z1 PocketArcade-unsigned.ipa | grep -Eq '^Payload/[^/]+\.app/'
+          file pocket-smoke.exe | grep -Eiq 'PE32|MS Windows'
+          if test -f SHA256SUMS.txt; then
+            shasum -a 256 -c SHA256SUMS.txt
+          else
+            echo 'Build artifact missing SHA256SUMS.txt' >&2
+            exit 1
+          fi
+          shasum -a 256 PocketArcade-unsigned.ipa pocket-smoke.exe > RELEASE-SHA256SUMS.txt
+
+      - name: Publish GitHub release
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${REQUESTED_TAG:-build-${RUN_ID}}"
+          if [[ ! "$TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]]; then
+            echo 'Invalid release tag' >&2
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to overwrite it" >&2
+            exit 1
+          fi
+          cat > release-notes.md <<EOF
+          Experimental Pocket Arcade build from GitHub Actions run #${RUN_ID}.
+
+          Commit: ${BUILD_SHA}
+
+          - **PocketArcade-unsigned.ipa**: unsigned iOS build; requires compatible signing and sideloading.
+          - **pocket-smoke.exe**: experimental Windows runtime smoke test.
+          - **RELEASE-SHA256SUMS.txt**: checksums for both files.
+
+          **JIT and Memory+ are not guaranteed by compilation.** In LiveContainer, check the host's debugger state and effective signing entitlements on-device.
+          EOF
+          gh release create "$TAG" \
+            artifacts/PocketArcade-unsigned.ipa \
+            artifacts/pocket-smoke.exe \
+            artifacts/RELEASE-SHA256SUMS.txt \
+            --repo "$GH_REPO" \
+            --target "$BUILD_SHA" \
+            --title "Pocket Arcade ${TAG}" \
+            --notes-file release-notes.md \
+            --prerelease
