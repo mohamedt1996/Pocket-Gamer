@@ -17,3 +17,12 @@ Install the debug APK on an ARM64 Android device. Tap **Test real Vulkan GPU com
 
 ## Android WSI experiment
 The SurfaceView JNI bridge creates a real VkSurfaceKHR using VK_KHR_android_surface, queries present-capable queues and surface capabilities, then releases all handles. It does not render a Wine window or include FEX/Wine/DXVK/VKD3D binaries. The imported runtime remains externally supplied.
+
+
+## Swapchain presentation experiment
+The `Render blue Vulkan swapchain frame` button creates an Android Vulkan
+swapchain, acquires an image, clears it to blue, and presents it on SurfaceView.
+It validates actual Vulkan WSI presentation (beyond surface enumeration).
+This does **not** implement Wine window mapping, FEX, DXVK, or VKD3D-Proton.
+If this fails on a device, preserve the reported VkResult and GPU model.
+The native rendering step has not been compiled or device-tested here.

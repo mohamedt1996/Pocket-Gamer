@@ -15,6 +15,7 @@ public class MainActivity extends Activity {
  private static native String nativeProbe();
  private static native String nativeVulkanTest();
  private static native String nativeSurfaceTest(android.view.Surface surface);
+ private static native String nativePresentTest(android.view.Surface surface);
  private final ExecutorService worker=Executors.newSingleThreadExecutor();
  private static final int PICK_EXE=22,PICK_RUNTIME=23;
  private RuntimeManager runtime;
@@ -30,6 +31,8 @@ public class MainActivity extends Activity {
   SurfaceView preview=new SurfaceView(this);layout.addView(preview,new LinearLayout.LayoutParams(-1,240));
   Button wsi=new Button(this);wsi.setText("Test Android Vulkan surface");layout.addView(wsi);
   wsi.setOnClickListener(v->{if(!preview.getHolder().getSurface().isValid()){report.setText("Surface not ready");return;}work("Testing Android Vulkan WSI",()->nativeSurfaceTest(preview.getHolder().getSurface()));});
+  Button present=new Button(this);present.setText("Render blue Vulkan swapchain frame");layout.addView(present);
+  present.setOnClickListener(v->{if(!preview.getHolder().getSurface().isValid()){report.setText("Surface not ready");return;}work("Rendering Vulkan swapchain",()->nativePresentTest(preview.getHolder().getSurface()));});
   Button install=new Button(this);install.setText("Import Android ARM64 Wine/FEX runtime ZIP");layout.addView(install);
   Button select=new Button(this);select.setText("Choose Windows EXE");layout.addView(select);
   Button play=new Button(this);play.setText("Attempt Windows execution");layout.addView(play);

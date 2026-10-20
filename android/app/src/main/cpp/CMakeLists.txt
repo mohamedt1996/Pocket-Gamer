@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
 project(madeira_probe LANGUAGES CXX)
-add_library(madeira_probe SHARED probe.cpp vulkan_probe.cpp surface_bridge.cpp)
+add_library(madeira_probe SHARED probe.cpp vulkan_probe.cpp surface_bridge.cpp present_test.cpp)
 target_compile_features(madeira_probe PRIVATE cxx_std_17)
 target_link_libraries(madeira_probe android log vulkan)
