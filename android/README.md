@@ -1,15 +1,21 @@
-# Madeira Android Runtime Lab (not a Windows emulator yet)
+# Madeira Android Windows Execution Lab
 
-This project builds a real ARM64 Android APK with a C++ JNI library, probes Vulkan availability, launches a separate Android child process, and inspects the DOS MZ signature of selected Windows executables. It **does not** execute Windows EXEs, and does not contain FEX, Wine or DXVK. The Android process probe is not a Windows execution test.
+This project compiles a real Android ARM64 APK, performs native diagnostics, imports a user-supplied Android ARM64 Wine/FEX runtime ZIP, copies a Windows PE executable, and attempts to launch it through a native child process. Logs and exit codes are shown in the UI.
 
-## Why this order
-A working FEX + ARM64EC Wine port requires Android-compatible loader, signal/exception mapping, memory management, PE execution, wineserver process model, X11/Wayland or native Android window bridge, audio/input, and Vulkan driver/WSI integration. Simply downloading source code during CI cannot establish that functionality.
+**Important:** This is a runtime loader, not a working Madeira Android port. It does NOT include an Android-compatible FEX interpreter, ARM64EC Wine, wineserver, DXVK, VKD3D, Vulkan window surface, audio or input bridge. Windows executables will NOT run unless these native components are separately ported and supplied in a working runtime bundle. A Linux ARM64 Wine binary is not automatically Android compatible. Android restrictions may also prohibit execution of binaries unpacked to writable app storage.
 
-## Next runtime milestones
-1. Build FEX for Android arm64 with executable-memory, signal, and filesystem smoke tests.
-2. Cross-build Wine ARM64EC/WoW64 for Android-compatible sysroot and test `wine --version`, wineserver, and a Windows console `hello.exe`.
-3. Add Android window surface/Wayland bridge, DXVK + VKD3D-Proton and validate D3D9/11/12 test executables.
-4. Bundle versioned, signed runtime archives and load them in the app; keep third-party license notices and redistribution rights.
-5. Only enable the game Play button after on-device Windows execution tests succeed.
+## Runtime ZIP contract
 
-Build locally with Android SDK 35, NDK 27, CMake and Gradle 8.9+: `cd android && gradle assembleDebug`.
+A ZIP must contain `bin/launcher`, an **Android AArch64 ELF** executable. The launcher receives the absolute path to a selected Windows `.exe` as its first argument. It is responsible for all translation, Wine startup, Windows prefix, display, input, graphics and game dependencies. Optional `lib/` and `share/` directories are extracted alongside. Only use trusted runtime archives; they contain native executable code.
+
+The importer rejects path traversal, caps the extracted size at 1.5 GiB and validates the ELF architecture. The Android process-execution security policy is still a potential blocker and needs physical-device validation.
+
+## Real Windows execution acceptance tests
+
+1. Import a functional Android-native FEX + Wine runtime; confirm the launcher starts.
+2. Execute an x86 and an x64 Windows console `hello.exe`, assert stdout and exit code 0.
+3. Execute a Windows GUI program; verify touch, keyboard and display bridge.
+4. Execute D3D9, D3D11 and D3D12 smoke tests through Vulkan and inspect frame output.
+5. Install per-game Adobe AIR, Wine Mono/.NET and VC++ dependencies inside a real Wine prefix and validate representative games.
+
+**No such runtime is bundled in this release, and none of those Windows execution tests have passed.**
