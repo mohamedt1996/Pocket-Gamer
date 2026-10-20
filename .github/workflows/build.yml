@@ -1229,8 +1229,33 @@ jobs:
       run: |
         # A DXMT cache hit skips its build step, including toolchain installation.
         # The app still compiles its own Metal shaders on this fresh runner.
-        if ! xcrun --sdk iphoneos metal --version; then
-          xcodebuild -downloadComponent MetalToolchain
+        # Xcode 27 images ship without the Metal Toolchain. A plain download can leave
+        # xcrun still unable to find it (the asset lands but is not registered), so
+        # fall back to export + import, then re-run first launch, before giving up.
+        metal_ok() { xcrun --sdk iphoneos metal --version >/dev/null 2>&1; }
+        if ! metal_ok; then
+          xcodebuild -downloadComponent MetalToolchain || true
+        fi
+        if ! metal_ok; then
+          echo "Metal Toolchain still missing after download; exporting and importing it."
+          export_dir="$RUNNER_TEMP/metal-toolchain"
+          rm -rf "$export_dir"; mkdir -p "$export_dir"
+          xcodebuild -downloadComponent MetalToolchain -exportPath "$export_dir"
+          bundle=$(find "$export_dir" -maxdepth 1 -name '*.exportedBundle' | head -1)
+          test -n "$bundle"
+          sudo xcodebuild -importComponent metalToolchain -importPath "$bundle" || xcodebuild -importComponent metalToolchain -importPath "$bundle"
+        fi
+        if ! metal_ok; then
+          sudo xcodebuild -runFirstLaunch || true
+          xcrun -k || true
+        fi
+        if ! metal_ok; then
+          echo "::group::Metal Toolchain diagnostics"
+          xcodebuild -version || true
+          xcodebuild -showComponent metalToolchain || true
+          ls -la /System/Library/AssetsV2 2>/dev/null | grep -i metal || true
+          ls -d /private/var/run/com.apple.security.cryptexd/mnt/*Metal* 2>/dev/null || true
+          echo "::endgroup::"
         fi
         xcrun --sdk iphoneos metal --version
     - name: Compile the experimental iOS application
