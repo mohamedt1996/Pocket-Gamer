@@ -77,7 +77,38 @@ replace('dlls/ntdll/unix/loader.c',
 if madeira:
     sys.exit(0)
 
-# ---- Proton Android fork only: adjust its build-scripts/ ----
+# ---- Proton Android fork only ----
+# The fork ships --enable-wineandroid_drv=no, so when it changed the win32u
+# driver interfaces it left wineandroid.drv behind. Bring the driver up to
+# the fork's own interfaces:
+#  - pWindowPosChanged lost its BOOL fullscreen argument (stale declaration);
+#  - OpenGL p_surface_create gained a BOOL raw argument, as in winex11/winewayland;
+#  - set_window_opengl_drawable() became private to win32u. Its only user here,
+#    update_gl_drawable(), is never called, so it goes;
+#  - drawable_mutex lost its definition but kept its declaration and init;
+#  - start_device_callback is a UINT64 field, so store the address as one.
+# Each matches upstream Wine 11.4's wineandroid.drv.
+replace('dlls/wineandroid.drv/android.h', 'extern pthread_mutex_t drawable_mutex;\n', '')
+replace('dlls/wineandroid.drv/init.c', '    pthread_mutex_init( &drawable_mutex, &attr );\n', '')
+replace('dlls/wineandroid.drv/dllmain.c',
+        '    params.start_device_callback = android_start_device;\n',
+        '    params.start_device_callback = (UINT_PTR)android_start_device;\n')
+replace('dlls/wineandroid.drv/android.h',
+        'extern void ANDROID_WindowPosChanged( HWND hwnd, HWND insert_after, HWND owner_hint, UINT swp_flags, BOOL fullscreen,\n',
+        'extern void ANDROID_WindowPosChanged( HWND hwnd, HWND insert_after, HWND owner_hint, UINT swp_flags,\n')
+replace('dlls/wineandroid.drv/opengl.c',
+        'static BOOL android_surface_create( HWND hwnd, int format, struct opengl_drawable **drawable )\n',
+        'static BOOL android_surface_create( HWND hwnd, BOOL raw, int format, struct opengl_drawable **drawable )\n')
+replace('dlls/wineandroid.drv/opengl.c',
+        'void update_gl_drawable( HWND hwnd )\n'
+        '{\n'
+        '    /* clear any cached opengl drawable */\n'
+        '    set_window_opengl_drawable( hwnd, NULL, TRUE );\n'
+        '    set_window_opengl_drawable( hwnd, NULL, FALSE );\n'
+        '    NtUserRedrawWindow( hwnd, NULL, 0, RDW_INVALIDATE | RDW_ERASE );\n'
+        '}\n\n', '')
+
+# Adjust the fork's build-scripts/.
 replace('build-scripts/build-step-arm64ec.sh', '--enable-wineandroid_drv=no', '--enable-wineandroid_drv=yes')
 
 # Drop GameNative's userspace ntsync. It is opt-in at runtime (WINENTSYNC=1;
