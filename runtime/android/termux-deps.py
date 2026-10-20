@@ -14,13 +14,19 @@ shipped with the runtime's licence bundle.
 usage: termux-deps.py DEST [--index-dir DIR] [--resolve-only]
 """
 from pathlib import Path
-import argparse, gzip, hashlib, lzma, re, shutil, subprocess, sys, tempfile, urllib.request
+import argparse, gzip, hashlib, lzma, re, shutil, subprocess, sys, tempfile
 
 # Official Termux repositories (aarch64). termux-main and termux-x11 are the
-# only sources needed: every root below resolves inside these two.
+# only sources needed: every root below resolves inside these two. Each lists
+# Termux's own mirrors in order; packages are verified against the index's
+# SHA256, so any mirror that answers is equally trustworthy.
 REPOS = [
-    ('https://packages-cf.termux.dev/apt/termux-main', 'stable', 'main'),
-    ('https://packages-cf.termux.dev/apt/termux-x11', 'x11', 'main'),
+    (['https://packages-cf.termux.dev/apt/termux-main',
+      'https://packages.termux.dev/apt/termux-main',
+      'https://mirror.grimler.se/termux/termux-main'], 'stable', 'main'),
+    (['https://packages-cf.termux.dev/apt/termux-x11',
+      'https://packages.termux.dev/apt/termux-x11',
+      'https://mirror.grimler.se/termux/termux-x11'], 'x11', 'main'),
 ]
 ARCH = 'aarch64'
 
@@ -59,18 +65,35 @@ def parse_index(text, base):
     return entries
 
 
-def fetch_index(base, dist, comp, index_dir):
+def curl(url, dest):
+    """Download with curl, the client setup-tools.sh already uses on CI.
+    Python's urllib could not fetch the Termux index from GitHub runners,
+    while apt-based builds there can. Raises RuntimeError with curl's own
+    message on failure."""
+    result = subprocess.run(['curl', '-fsSL', '--retry', '3', '--retry-delay', '2',
+                             '--connect-timeout', '30', '-o', str(dest), url],
+                            capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or f'curl exit {result.returncode}')
+
+
+def fetch_index(mirrors, dist, comp, index_dir):
+    """Return (index text, mirror base that served it)."""
     if index_dir:
-        host = base.split('://', 1)[1].replace('/', '_')
-        return (Path(index_dir) / f'{host}_dists_{dist}_{comp}_binary-{ARCH}_Packages').read_text()
-    url = f'{base}/dists/{dist}/{comp}/binary-{ARCH}/Packages'
-    for suffix, decode in (('.xz', lzma.decompress), ('.gz', gzip.decompress), ('', bytes)):
-        try:
-            with urllib.request.urlopen(url + suffix, timeout=60) as r:
-                return decode(r.read()).decode()
-        except OSError:
-            continue
-    raise SystemExit(f'Cannot download Termux index {url}')
+        host = mirrors[0].split('://', 1)[1].replace('/', '_')
+        return (Path(index_dir) / f'{host}_dists_{dist}_{comp}_binary-{ARCH}_Packages').read_text(), mirrors[0]
+    errors = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for base in mirrors:
+            url = f'{base}/dists/{dist}/{comp}/binary-{ARCH}/Packages'
+            for suffix, decode in (('.xz', lzma.decompress), ('.gz', gzip.decompress), ('', lambda b: b)):
+                dest = Path(tmp) / 'Packages'
+                try:
+                    curl(url + suffix, dest)
+                    return decode(dest.read_bytes()).decode(), base
+                except (RuntimeError, lzma.LZMAError, OSError, EOFError, UnicodeDecodeError) as e:
+                    errors.append(f'  {url}{suffix}: {e}')
+    raise SystemExit('Cannot download the Termux index from any mirror:\n' + '\n'.join(errors))
 
 
 def version_key(v):
@@ -110,17 +133,22 @@ def resolve(entries):
 
 
 def download(entry, cache):
+    """Fetch one .deb, trying the serving mirror first, then the others."""
     dest = cache / Path(entry['Filename']).name
-    if not dest.exists():
-        url = f"{entry['_base']}/{entry['Filename']}"
-        with urllib.request.urlopen(url, timeout=300) as r, open(dest.with_suffix('.part'), 'wb') as f:
-            shutil.copyfileobj(r, f)
-        dest.with_suffix('.part').rename(dest)
-    digest = hashlib.sha256(dest.read_bytes()).hexdigest()
-    if digest != entry['SHA256']:
+    errors = []
+    for base in [entry['_base']] + [m for m in entry['_mirrors'] if m != entry['_base']]:
+        url = f"{base}/{entry['Filename']}"
+        try:
+            curl(url, dest)
+        except RuntimeError as e:
+            errors.append(f'  {url}: {e}')
+            continue
+        digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+        if digest == entry['SHA256']:
+            return dest
+        errors.append(f"  {url}: SHA256 {digest} != {entry['SHA256']}")
         dest.unlink()
-        raise SystemExit(f"SHA256 mismatch for {entry['Package']}: {digest} != {entry['SHA256']}")
-    return dest
+    raise SystemExit(f"Cannot download {entry['Package']}:\n" + '\n'.join(errors))
 
 
 def main():
@@ -130,8 +158,12 @@ def main():
     ap.add_argument('--resolve-only', action='store_true')
     args = ap.parse_args()
     entries = []
-    for base, dist, comp in REPOS:
-        entries += parse_index(fetch_index(base, dist, comp, args.index_dir), base)
+    for mirrors, dist, comp in REPOS:
+        text, base = fetch_index(mirrors, dist, comp, args.index_dir)
+        repo_entries = parse_index(text, base)
+        for e in repo_entries:
+            e['_mirrors'] = mirrors
+        entries += repo_entries
     chosen = resolve(entries)
     manifest = ''.join(f"{n} {e['Version']} {e['SHA256']} {e['_base']}/{e['Filename']}\n"
                        for n, e in sorted(chosen.items()))
