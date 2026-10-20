@@ -1343,12 +1343,21 @@ jobs:
         "$SDKMANAGER" --sdk_root="$SDK" --install \
           'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
         yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses > /dev/null || test "${PIPESTATUS[1]}" -eq 0
+    - name: Install Android native build dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+        SDKMANAGER="$(find "$SDK/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort -V | tail -1)"
+        "$SDKMANAGER" --sdk_root="$SDK" --install 'ndk;27.2.12479018' 'cmake;3.22.1'
     - uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '8.9'
     - name: Verify Android port exists
       shell: bash
       run: |
         set -euo pipefail
-        if [ ! -f android/gradlew ] || [ ! -f android/app/build.gradle.kts ]; then
+        if [ ! -f android/settings.gradle.kts ] || [ ! -f android/app/build.gradle.kts ]; then
           echo '::notice::Android native Madeira/FEX/Wine port has not been implemented in this repository; skipping APK instead of publishing a nonfunctional shell.'
           echo 'ANDROID_PORT_PRESENT=false' >> "$GITHUB_ENV"
         else
@@ -1358,13 +1367,12 @@ jobs:
       if: env.ANDROID_PORT_PRESENT == 'true'
       working-directory: android
       run: |
-        chmod +x gradlew
-        ./gradlew --no-daemon assembleDebug
+        gradle --no-daemon assembleDebug
     - name: Publish Android build artifact
       if: env.ANDROID_PORT_PRESENT == 'true'
       uses: actions/upload-artifact@v4
       with:
-        name: Madeira-Android-debug
+        name: Madeira-Android-runtime-lab-debug
         path: android/app/build/outputs/apk/debug/*.apk
         if-no-files-found: error
 
@@ -1399,7 +1407,7 @@ jobs:
     steps:
     - uses: actions/download-artifact@v4
       with:
-        name: Madeira-Android-debug
+        name: Madeira-Android-runtime-lab-debug
         path: android-release
     - name: Release Android APK only if a real port compiled
       env:
@@ -1412,7 +1420,7 @@ jobs:
         test "${#apks[@]}" -gt 0 || { echo 'No Android APK built; no Android release'; exit 1; }
         gh release create "android-build-${GITHUB_RUN_NUMBER}" "${apks[@]}" \
           --title "Madeira Android build ${GITHUB_RUN_NUMBER}" \
-          --notes 'Experimental Android build. Windows runtime functionality must be tested.' \
+          --notes 'Android native runtime lab only. FEX/Wine/DXVK and Windows game execution are not implemented.' \
           --prerelease
 'on':
   push:
