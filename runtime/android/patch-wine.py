@@ -108,6 +108,14 @@ replace('dlls/wineandroid.drv/opengl.c',
         '    NtUserRedrawWindow( hwnd, NULL, 0, RDW_INVALIDATE | RDW_ERASE );\n'
         '}\n\n', '')
 
+# The fork's make_vulkan pulls in every extension of a platform listed in
+# UNEXPOSED_PLATFORMS, so adding "android" (for VK_KHR_android_surface) also
+# generates thunks for AHardwareBuffer extensions that do not compile. The
+# Android driver needs only the surface extension; leave the rest out.
+replace('dlls/winevulkan/make_vulkan', 'UNSUPPORTED_EXTENSIONS = [\n',
+        'UNSUPPORTED_EXTENSIONS = [\n'
+        '    "VK_ANDROID_external_memory_android_hardware_buffer", # AHardwareBuffer thunks do not compile\n')
+
 # Adjust the fork's build-scripts/.
 replace('build-scripts/build-step-arm64ec.sh', '--enable-wineandroid_drv=no', '--enable-wineandroid_drv=yes')
 
