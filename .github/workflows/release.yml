@@ -1,111 +1,248 @@
+# Pocket Arcade: publish a GitHub release from a successful build.yml run.
+#
+# Nothing is rebuilt here; the release is assembled from that run's artifacts.
+#   - Automatically after every successful build of main  -> pre-release build-<run number>
+#   - Pushing a tag like v1.2.0 (or v1.2.0-beta.1)       -> release for that tag, from the
+#     successful main build of the tagged commit (tags with a '-' are pre-releases)
+#   - Manually (Actions > Run workflow)                   -> pick a build run and tag
+# Artifacts expire (iOS: 14 days), so release a build while its artifacts still exist.
 name: Pocket Arcade - Publish Release
 
 on:
   workflow_run:
     workflows:
-      - Pocket Arcade - iOS hub and Ubuntu companion
+      - Pocket Arcade - Unified iOS and Android
     types: [completed]
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       build_run_id:
-        description: 'Successful build workflow run ID containing PocketArcade-iOS-experimental'
-        required: true
-        type: string
-      tag:
-        description: 'Optional release tag (defaults to build-<run ID>)'
+        description: 'build.yml run ID to release (empty = latest successful build of main)'
         required: false
         type: string
+      tag:
+        description: 'Release tag (empty = build-<run number>)'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark as a pre-release'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
   actions: read
 
 concurrency:
-  group: pocket-arcade-release-${{ github.event.workflow_run.id || inputs.build_run_id }}
+  group: pocket-arcade-release-${{ github.event.workflow_run.id || github.ref_name || inputs.build_run_id }}
   cancel-in-progress: false
 
 jobs:
   publish:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      github.event_name != 'workflow_run' ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.event != 'pull_request')
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      RUN_ID: ${{ github.event.workflow_run.id || inputs.build_run_id }}
-      REQUESTED_TAG: ${{ inputs.tag }}
+      EVENT: ${{ github.event_name }}
+      WR_RUN_ID: ${{ github.event.workflow_run.id }}
+      INPUT_RUN_ID: ${{ inputs.build_run_id }}
+      INPUT_TAG: ${{ inputs.tag }}
+      INPUT_PRERELEASE: ${{ inputs.prerelease }}
+      PUSHED_TAG: ${{ github.ref_name }}
+      PUSHED_SHA: ${{ github.sha }}
     steps:
-      - name: Verify source build and download artifacts
+      - name: Choose the build run and tag
         shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/$GH_REPO/actions/runs/$RUN_ID" > run.json
-          python3 - <<'PY'
-          import json,os
-          run=json.load(open('run.json'))
-          assert run['conclusion']=='success', 'Build run was not successful'
-          assert run['head_repository']['full_name'].lower()==os.environ['GH_REPO'].lower(), 'Fork build rejected'
-          assert run['head_branch']=='main', 'Only main builds can be released'
-          assert run['event']!='pull_request', 'Pull request builds cannot be released'
-          with open(os.environ['GITHUB_ENV'],'a') as f:
-              f.write('BUILD_SHA='+run['head_sha']+'\n')
-          PY
-          mkdir -p artifacts
-          gh run download "$RUN_ID" --repo "$GH_REPO" --name PocketArcade-iOS-experimental --dir artifacts
-          find artifacts -maxdepth 2 -type f -print
+          case "$EVENT" in
+            workflow_run)
+              run_id="$WR_RUN_ID"; tag=""; prerelease=true ;;
+            push)
+              # Tagged commit must have a successful build of main.
+              run_id=$(gh api "repos/$GH_REPO/actions/workflows/build.yml/runs?head_sha=$PUSHED_SHA&branch=main&status=success&per_page=1" \
+                       --jq '.workflow_runs[0].id // empty')
+              if [[ -z "$run_id" ]]; then
+                echo "::error::No successful build.yml run of main for $PUSHED_SHA yet. Wait for it, then run this workflow manually with tag $PUSHED_TAG."
+                exit 1
+              fi
+              tag="$PUSHED_TAG"
+              if [[ "$tag" == *-* ]]; then prerelease=true; else prerelease=false; fi ;;
+            workflow_dispatch)
+              run_id="${INPUT_RUN_ID:-}"
+              if [[ -z "$run_id" ]]; then
+                run_id=$(gh api "repos/$GH_REPO/actions/workflows/build.yml/runs?branch=main&status=success&per_page=1" \
+                         --jq '.workflow_runs[0].id // empty')
+              fi
+              [[ -n "$run_id" ]] || { echo "::error::No successful build.yml run of main found"; exit 1; }
+              tag="${INPUT_TAG:-}"; prerelease="${INPUT_PRERELEASE:-true}" ;;
+            *) echo "::error::Unsupported event $EVENT"; exit 1 ;;
+          esac
+          [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Invalid run ID '$run_id'"; exit 1; }
 
-      - name: Validate IPA, smoke test and checksums
+          gh api "repos/$GH_REPO/actions/runs/$run_id" > run.json
+          python3 - "$run_id" <<'PY'
+          import json, os, sys
+          run = json.load(open('run.json'))
+          checks = [
+              (run['conclusion'] == 'success', 'build run did not succeed'),
+              (run['path'].split('@')[0] == '.github/workflows/build.yml', 'run is not from build.yml'),
+              (run['head_repository']['full_name'].lower() == os.environ['GH_REPO'].lower(), 'run is from a fork'),
+              (run['head_branch'] == 'main', 'only builds of main can be released'),
+              (run['event'] in ('push', 'workflow_dispatch'), 'pull request builds cannot be released'),
+          ]
+          for ok, why in checks:
+              if not ok:
+                  sys.exit(f"::error::Run {sys.argv[1]}: {why}")
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f"RUN_ID={sys.argv[1]}\nRUN_NUMBER={run['run_number']}\n"
+                      f"BUILD_SHA={run['head_sha']}\nRUN_URL={run['html_url']}\n")
+          PY
+          tag="${tag:-build-$(jq -r .run_number run.json)}"
+          if [[ ! "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]]; then
+            echo "::error::Invalid release tag '$tag'"; exit 1
+          fi
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "::error::Release $tag already exists; refusing to overwrite it"; exit 1
+          fi
+          { echo "TAG=$tag"; echo "PRERELEASE=$prerelease"; } >> "$GITHUB_ENV"
+          echo "Releasing run $run_id as $tag (prerelease=$prerelease)"
+
+      - name: Download the build's artifacts
         shell: bash
         run: |
           set -euo pipefail
-          cd artifacts
-          test -s PocketArcade-unsigned.ipa
-          test -s pocket-smoke.exe
-          unzip -tq PocketArcade-unsigned.ipa
-          unzip -Z1 PocketArcade-unsigned.ipa | grep -Eq '^Payload/[^/]+\.app/'
-          file pocket-smoke.exe | grep -Eiq 'PE32|MS Windows'
-          if test -f SHA256SUMS.txt; then
-            shasum -a 256 -c SHA256SUMS.txt
+          gh api --paginate "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | [.name, (.expired|tostring)] | @tsv' > artifacts.tsv
+          for name in PocketArcade-iOS-experimental Madeira-Android-runtime-lab-debug \
+                      PocketArcade-Ubuntu-companion-amd64 Madeira-Android-source-lock-and-notices; do
+            state=$(awk -F'\t' -v n="$name" '$1==n{print $2}' artifacts.tsv)
+            case "$state" in
+              false) gh run download "$RUN_ID" --repo "$GH_REPO" --name "$name" --dir "in/$name" ;;
+              true)  echo "::error::Artifact $name of run $RUN_ID has expired; release a newer build"; exit 1 ;;
+              *)     echo "::error::Run $RUN_ID has no artifact $name"; exit 1 ;;
+            esac
+          done
+          # Optional: experimental APK built around Madeira's Wine. Its build job may
+          # fail without failing the build, so a missing APK only drops it from the release.
+          madeira=false
+          if [[ "$(awk -F'\t' '$1=="MadeiraWine-Android-runtime-lab-debug"{print $2}' artifacts.tsv)" == false &&
+                "$(awk -F'\t' '$1=="MadeiraWine-Android-source-lock-and-notices"{print $2}' artifacts.tsv)" == false ]]; then
+            for name in MadeiraWine-Android-runtime-lab-debug MadeiraWine-Android-source-lock-and-notices; do
+              gh run download "$RUN_ID" --repo "$GH_REPO" --name "$name" --dir "in/$name"
+            done
+            madeira=true
           else
-            echo 'Build artifact missing SHA256SUMS.txt' >&2
-            exit 1
+            echo "::warning::Run $RUN_ID has no Madeira Wine APK; releasing without it"
           fi
-          shasum -a 256 PocketArcade-unsigned.ipa pocket-smoke.exe > RELEASE-SHA256SUMS.txt
+          echo "MADEIRA_APK=$madeira" >> "$GITHUB_ENV"
+          find in -maxdepth 3 -type f | sort
+
+      - name: Validate and stage release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release notices
+          ios=in/PocketArcade-iOS-experimental
+          apk_dir=in/Madeira-Android-runtime-lab-debug
+          comp=in/PocketArcade-Ubuntu-companion-amd64/companion
+
+          # iOS: unsigned IPA and the Windows smoke test, checked against the build's own sums.
+          (cd "$ios" && sha256sum -c SHA256SUMS.txt)
+          unzip -tq "$ios/PocketArcade-unsigned.ipa"
+          unzip -Z1 "$ios/PocketArcade-unsigned.ipa" | grep -Eq '^Payload/[^/]+\.app/'
+          file "$ios/pocket-smoke.exe" | grep -Eiq 'PE32|MS Windows'
+          cp "$ios/PocketArcade-unsigned.ipa" "release/PocketArcade-iOS-$TAG-unsigned.ipa"
+          cp "$ios/pocket-smoke.exe" release/pocket-smoke.exe
+
+          # Android: debug APK with the bundled runtime and native library.
+          shopt -s nullglob
+          apks=("$apk_dir"/*.apk)
+          [[ ${#apks[@]} -eq 1 ]] || { echo "::error::Expected one APK, found ${#apks[@]}"; exit 1; }
+          python3 - "${apks[0]}" <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              assert z.testzip() is None, 'corrupt APK'
+              assert z.getinfo('assets/madeira-runtime.zip').file_size > 1_000_000, 'runtime missing'
+              assert z.getinfo('lib/arm64-v8a/libmadeira_probe.so').file_size > 0, 'native library missing'
+          PY
+          cp "${apks[0]}" "release/PocketArcade-Android-$TAG-arm64-debug.apk"
+
+          # Experimental Android APK with Madeira's Wine, when the build produced it.
+          if [[ "$MADEIRA_APK" == true ]]; then
+            mapks=(in/MadeiraWine-Android-runtime-lab-debug/*.apk)
+            [[ ${#mapks[@]} -eq 1 ]] || { echo "::error::Expected one Madeira Wine APK, found ${#mapks[@]}"; exit 1; }
+            python3 - "${mapks[0]}" <<'PY'
+          import io, json, sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as z:
+              assert z.testzip() is None, 'corrupt APK'
+              assert z.getinfo('lib/arm64-v8a/libmadeira_probe.so').file_size > 0, 'native library missing'
+              runtime = zipfile.ZipFile(io.BytesIO(z.read('assets/madeira-runtime.zip')))
+              assert json.loads(runtime.read('runtime.json')).get('wine') == 'wine-madeira', 'not the Madeira Wine runtime'
+          PY
+            cp "${mapks[0]}" "release/PocketArcade-Android-MadeiraWine-$TAG-arm64-debug-experimental.apk"
+            cp -R in/MadeiraWine-Android-source-lock-and-notices notices/android-madeira-wine
+          fi
+
+          # Ubuntu companion: Docker image, checked against the build's own sum.
+          (cd "$comp" && sha256sum -c SHA256SUMS.txt)
+          cp "$comp/pocket-companion-image.tar.gz" "release/PocketArcade-companion-$TAG-amd64-image.tar.gz"
+
+          # Licences, source locks and patches for the shipped binaries (LGPL/GPL notices).
+          cp -R in/Madeira-Android-source-lock-and-notices notices/android
+          mkdir -p notices/ios
+          for f in LICENSE COPYING LICENSE-EXCEPTION.md THIRD-PARTY-NOTICES.md \
+                   SOURCE-REVISIONS.txt wine-ci.patch application-ci.patch; do
+            if [[ -f "$ios/$f" ]]; then cp "$ios/$f" notices/ios/; else echo "::warning::iOS notice $f missing"; fi
+          done
+          (cd notices && zip -qr "../release/PocketArcade-$TAG-source-and-notices.zip" .)
+
+          # GitHub rejects release assets of 2 GiB or more.
+          for f in release/*; do
+            size=$(stat -c %s "$f")
+            [[ $size -lt 2147483648 ]] || { echo "::error::$f is too large for a release asset"; exit 1; }
+          done
+          (cd release && sha256sum -- * > SHA256SUMS.txt)
+          ls -la release
 
       - name: Publish GitHub release
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${REQUESTED_TAG:-build-${RUN_ID}}"
-          if [[ ! "$TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]]; then
-            echo 'Invalid release tag' >&2
-            exit 1
-          fi
-          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; refusing to overwrite it" >&2
-            exit 1
+          if [[ "$MADEIRA_APK" == true ]]; then
+            MADEIRA_ROW="| \`PocketArcade-Android-MadeiraWine-${TAG}-arm64-debug-experimental.apk\` | **Experimental** Android app built on Madeira's Wine 11.4 instead of the Proton fork. Installs next to the regular app as \"Pocket Arcade (Madeira Wine)\". Not tested on devices yet. |"
+          else
+            MADEIRA_ROW=""
           fi
           cat > release-notes.md <<EOF
-          Experimental Pocket Arcade build from GitHub Actions run #${RUN_ID}.
+          Pocket Arcade ${TAG}, built by [build run #${RUN_NUMBER}](${RUN_URL}) from commit ${BUILD_SHA}.
 
-          Commit: ${BUILD_SHA}
+          | File | What it is |
+          |---|---|
+          | \`PocketArcade-iOS-${TAG}-unsigned.ipa\` | iOS app, unsigned: sign and sideload it yourself |
+          | \`pocket-smoke.exe\` | Small x64 Windows test program: import it into the app's game library and launch it first |
+          | \`PocketArcade-Android-${TAG}-arm64-debug.apk\` | Android app (arm64, debug-signed) with the bundled Wine/FEX/DXVK/vkd3d runtime |
+          | \`PocketArcade-companion-${TAG}-amd64-image.tar.gz\` | Ubuntu companion server Docker image: \`docker load -i <file>\` |
+          | \`PocketArcade-${TAG}-source-and-notices.zip\` | Licences, pinned source revisions and patches for the shipped binaries |
+          | \`SHA256SUMS.txt\` | Checksums for every file in this release |
+          ${MADEIRA_ROW}
 
-          - **PocketArcade-unsigned.ipa**: unsigned iOS build; requires compatible signing and sideloading.
-          - **pocket-smoke.exe**: experimental Windows runtime smoke test.
-          - **RELEASE-SHA256SUMS.txt**: checksums for both files.
-
-          **JIT and Memory+ are not guaranteed by compilation.** In LiveContainer, check the host's debugger state and effective signing entitlements on-device.
+          **Experimental.** These builds compile and pass CI checks, but on-device play is not verified.
+          On iOS, JIT and Memory+ are not guaranteed by compilation; check the host's debugger state and
+          signing entitlements on-device. The Android APK is debug-signed and not intended for app stores.
           EOF
-          gh release create "$TAG" \
-            artifacts/PocketArcade-unsigned.ipa \
-            artifacts/pocket-smoke.exe \
-            artifacts/RELEASE-SHA256SUMS.txt \
-            --repo "$GH_REPO" \
-            --target "$BUILD_SHA" \
-            --title "Pocket Arcade ${TAG}" \
-            --notes-file release-notes.md \
-            --prerelease
+          args=(--repo "$GH_REPO" --title "Pocket Arcade ${TAG}" --notes-file release-notes.md)
+          [[ "$PRERELEASE" == "true" ]] && args+=(--prerelease)
+          # A pushed tag already exists; otherwise create the tag at the built commit.
+          [[ "$EVENT" == "push" ]] || args+=(--target "$BUILD_SHA")
+          gh release create "$TAG" release/* "${args[@]}"
+          echo "Published $(gh release view "$TAG" --repo "$GH_REPO" --json url --jq .url)"

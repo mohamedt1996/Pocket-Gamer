@@ -2,6 +2,14 @@
 from pathlib import Path
 import sys
 java=Path(sys.argv[1]).read_text()
+
+def edit(old, new):
+    """Replace exactly one occurrence; fail if this Wine's WineActivity changed."""
+    global java
+    count = java.count(old)
+    if count != 1:
+        raise SystemExit(f'WineActivity.java anchor changed: expected once, got {count}: {old.strip()[:70]!r}')
+    java = java.replace(old, new, 1)
 start=java.index('    private void loadWine( String cmdline )')
 end=java.index('    private final void runWine(',start)
 java=java[:start]+'''    private void loadWine(String ignored)
@@ -47,9 +55,20 @@ java=java[:start]+'''    private void loadWine(String ignored)
 '''+java[end:]
 # The app runs in a dedicated :wine process. Keep the JNI class name unchanged.
 
-java=java.replace('    private final String LOGTAG = "wine";', '    private int active_hwnd;\n    private final java.util.HashSet<Integer> heldKeys = new java.util.HashSet<>();\n    private final String LOGTAG = "wine";')
-java=java.replace('        public boolean onTouchEvent( MotionEvent event )\n        {', '        public boolean onTouchEvent( MotionEvent event )\n        {\n            active_hwnd = window.hwnd;')
-java=java.replace('        setContentView( new TopView( this, hwnd ));', '        setContentView( new TopView( this, hwnd ));\n        active_hwnd = hwnd;\n        addControls();')
+edit('    private final String LOGTAG = "wine";', '    private int active_hwnd;\n    private final java.util.HashSet<Integer> heldKeys = new java.util.HashSet<>();\n    private final String LOGTAG = "wine";')
+edit('        public boolean onTouchEvent( MotionEvent event )\n        {', '        public boolean onTouchEvent( MotionEvent event )\n        {\n            active_hwnd = window.hwnd;')
+# The desktop is created differently by the two Wine trees this script serves.
+if 'setContentView( new TopView( this, hwnd ));' in java:
+    # Proton Android fork (Wine 11.0): desktop view and window are created together.
+    edit('        setContentView( new TopView( this, hwnd ));',
+         '        setContentView( new TopView( this, hwnd ));\n        active_hwnd = hwnd;\n        addControls();')
+else:
+    # Madeira / upstream Wine 11.4: the view comes first, the desktop window
+    # arrives later through create_window(..., is_desktop, ...).
+    edit('        setContentView( top_view = new TopView( this ));',
+         '        setContentView( top_view = new TopView( this ));\n        addControls();')
+    edit('                desktop_window = win;\n',
+         '                desktop_window = win;\n                active_hwnd = hwnd;\n')
 controls = r"""
     private void addControls() {
         android.widget.LinearLayout row = new android.widget.LinearLayout(this);
@@ -81,7 +100,7 @@ controls = r"""
         heldKeys.clear();super.onPause();
     }
 """
-java=java.replace('    // Entry points for the device driver',controls+'\n    // Entry points for the device driver')
+edit('    // Entry points for the device driver',controls+'\n    // Entry points for the device driver')
 java_dir=Path(sys.argv[2])
 java_dir.mkdir(parents=True,exist_ok=True)
 (java_dir/'WineActivity.java').write_text(java)

@@ -1502,6 +1502,79 @@ jobs:
         if-no-files-found: error
         include-hidden-files: true
 
+  android_port_madeira:
+    # Experimental second APK: the same app and FEX/graphics components, but with
+    # Madeira's Wine (android_madeira_wine) instead of the Proton Android fork.
+    # Separate application ID, so it installs next to the regular APK.
+    name: Package Android APK with Madeira Wine (experimental)
+    needs: [android_components, android_madeira_wine]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: actions/download-artifact@v4
+      with:
+        name: Android-component-wine-madeira
+        path: .android-out/wine-madeira
+    - uses: actions/download-artifact@v4
+      with:
+        name: Android-component-fex
+        path: .android-out/fex
+    - uses: actions/download-artifact@v4
+      with:
+        name: Android-component-graphics
+        path: .android-out/graphics
+    - name: Assemble and verify runtime bundle
+      run: python3 runtime/android/package-runtime.py --wine wine-madeira
+    - name: Configure SDK and NDK
+      shell: bash
+      run: |
+        set -euo pipefail
+        SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+        SDKMANAGER=$(find "$SDK/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)
+        "$SDKMANAGER" --sdk_root="$SDK" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.3.13750724' 'cmake;3.22.1'
+        echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+    - uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '8.9'
+    - name: Build bundled Android APK
+      working-directory: android
+      run: gradle --no-daemon -PwineVariant=madeira assembleDebug
+    - name: Confirm APK contains the Madeira runtime
+      run: |
+        python3 - <<'PYAPK'
+        import io,json,zipfile,pathlib
+        apks=list(pathlib.Path('android/app/build/outputs/apk/debug').glob('*.apk'))
+        assert len(apks)==1, f'expected one APK, found {len(apks)}'
+        with zipfile.ZipFile(apks[0]) as z:
+            assert z.getinfo('lib/arm64-v8a/libmadeira_probe.so').file_size > 0
+            runtime=zipfile.ZipFile(io.BytesIO(z.read('assets/madeira-runtime.zip')))
+            manifest=json.loads(runtime.read('runtime.json'))
+            assert manifest['wine']=='wine-madeira', manifest.get('wine')
+            for name in ('lib/wine/aarch64-unix/ntdll.so','lib/wine/aarch64-unix/winedirectaudio.so',
+                         'share/licenses/madeira/COPYING'):
+                runtime.getinfo(name)
+        print('APK carries the Madeira Wine runtime:',apks[0].name)
+        PYAPK
+    - uses: actions/upload-artifact@v4
+      with:
+        name: MadeiraWine-Android-runtime-lab-debug
+        path: android/app/build/outputs/apk/debug/*.apk
+        if-no-files-found: error
+        include-hidden-files: true
+    - uses: actions/upload-artifact@v4
+      with:
+        name: MadeiraWine-Android-source-lock-and-notices
+        path: |
+          runtime/android
+          .android-out/bundle/share/licenses
+        if-no-files-found: error
+        include-hidden-files: true
   publish_ios:
     name: Separate iOS release
     if: github.event_name == 'workflow_dispatch' && inputs.publish_releases == true

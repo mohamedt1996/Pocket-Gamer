@@ -2,10 +2,19 @@
 
 This builds the Android runtime's Wine from **Madeira's Wine fork**
 (`willfaust/wine`, branch `madeira-lgpl`, Wine 11.4) instead of the Proton
-Android fork used by `build-wine.sh`. It is a separate CI job
-(`android_madeira_wine`) with `continue-on-error`, so it never blocks the
-shipped APK, and its output (`Android-component-wine-madeira`) is not packaged
-yet.
+Android fork used by `build-wine.sh`, and packages it as a **second,
+experimental APK**:
+
+| CI job | Output |
+|---|---|
+| `android_madeira_wine` | `Android-component-wine-madeira`: the Wine runtime |
+| `android_port_madeira` | `MadeiraWine-Android-runtime-lab-debug`: the APK, plus its notices |
+
+Both jobs use `continue-on-error`, so they never block the regular APK. The
+Madeira APK is built with `-PwineVariant=madeira`, which gives it its own
+application ID (`org.pocketarcade.madeira.winemadeira`) and the name
+"Pocket Arcade (Madeira Wine)", so it installs next to the regular app.
+`release.yml` attaches it to releases when the build produced it.
 
 ## What Madeira's Wine brings, and what it does not
 
@@ -77,5 +86,14 @@ Not verified:
   pass.
 - Running on a device. Nothing here shows that Wine starts or that games run.
 
-Next: run the CI job, offer `wine-madeira` as an alternative `wine` component
-in packaging, and test on hardware (Android 9 and 13+, arm64, 16 KB pages).
+Since then, `build-wine-madeira.sh` has run end to end on CI with the real NDK.
+
+The app's Java side: `prepare-java.py` customises each Wine build's own
+`WineActivity.java`. Upstream 11.4 creates the desktop view first and the
+desktop window later (`create_window(..., is_desktop, ...)`), so for this
+variant the on-screen controls are added in `create_desktop_view()` and the
+active window is set when the desktop window is created. Every edit now fails
+the build if its anchor is missing, instead of being skipped silently.
+
+Next: test the Madeira APK on hardware (Android 9 and 13+, arm64, 16 KB pages)
+next to the regular one.

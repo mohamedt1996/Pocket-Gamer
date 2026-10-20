@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
-"""Assemble CI outputs, checking native architecture and mandatory components."""
+"""Assemble CI outputs, checking native architecture and mandatory components.
+
+usage: package-runtime.py [--wine wine|wine-madeira]
+--wine picks the Wine component under .android-out/: "wine" (Proton Android
+fork, the default) or "wine-madeira" (Madeira's Wine, experimental).
+"""
 from pathlib import Path
 import hashlib,json,shutil,struct,sys,zipfile
 root=Path(__file__).resolve().parents[2]
+args=sys.argv[1:]
+wine='wine'
+if args[:1]==['--wine'] and len(args)==2: wine=args[1]
+elif args: raise SystemExit('usage: package-runtime.py [--wine wine|wine-madeira]')
+if wine not in ('wine','wine-madeira'): raise SystemExit('Unknown Wine component: '+wine)
 out=root/'.android-out'; stage=out/'bundle'
 if stage.exists(): shutil.rmtree(stage)
 stage.mkdir(parents=True)
-for name in ('wine','fex'):
+for name in (wine,'fex'):
     shutil.copytree(out/name,stage,dirs_exist_ok=True,symlinks=False)
 shutil.copytree(out/'graphics',stage/'graphics',dirs_exist_ok=True)
 required=['bin/wine','bin/wineserver','lib/wine/aarch64-unix/ntdll.so',
@@ -50,7 +60,7 @@ subprocess.run([sys.executable,str(root/'runtime/android/prepare-java.py'),
                 str(root/'android/app/src/main/java/org/winehq/wine')],check=True)
 files={p.relative_to(stage).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
        for p in sorted(stage.rglob('*')) if p.is_file() and p.name!='runtime.json'}
-manifest={'schema':2,'abi':'arm64-v8a','kind':'wine-arm64ec-android','files':files,
+manifest={'schema':2,'abi':'arm64-v8a','kind':'wine-arm64ec-android','wine':wine,'files':files,
           'sources':json.loads((root/'runtime/android/sources.json').read_text()),
           'validation':'compiled-components-only; device execution not verified'}
 (stage/'runtime.json').write_text(json.dumps(manifest,indent=2)+'\n')
