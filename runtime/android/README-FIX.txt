@@ -1,1 +1,2 @@
 Replace both runtime/android/patch-wine.py and runtime/android/build-wine.sh. Do not change build.yml. This selects pinned llvm-mingw ARM64EC dlltool for Wine's host winebuild and fails early if it lacks support. Existing FEX, graphics, iOS and their caches are unchanged. The complete Wine compilation remains unverified.\n
+V2: Avoid grep -q in a pipefail pipeline: llvm-dlltool --help can receive SIGPIPE after grep exits, causing a false unsupported-target error. Capture help output first and search it with a here-string.

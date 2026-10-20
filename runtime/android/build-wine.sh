@@ -9,9 +9,10 @@ MINGW="${LLVM_MINGW:-$HOME/toolchains/llvm-mingw-20250920-ucrt-ubuntu-22.04-x86_
 export DLLTOOL="$MINGW/bin/llvm-dlltool"
 export PATH="$MINGW/bin:$PATH"
 test -x "$DLLTOOL" || { echo "::error::Missing pinned llvm-mingw dlltool: $DLLTOOL"; exit 1; }
-if ! "$DLLTOOL" --help 2>&1 | grep -Eiq 'arm64ec'; then
+dlltool_help=$("$DLLTOOL" --help 2>&1) || { echo "::error::llvm-dlltool --help failed"; exit 1; }
+if ! grep -Eiq '(^|[[:space:],])arm64ec([[:space:],]|$)' <<< "$dlltool_help"; then
   echo "::error::Pinned llvm-mingw dlltool lacks ARM64EC support; do not use system LLVM 18."
-  "$DLLTOOL" --help | tail -30
+  tail -30 <<< "$dlltool_help"
   exit 1
 fi
 echo "ARM64EC import tool: $DLLTOOL"
