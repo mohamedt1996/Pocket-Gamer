@@ -137,13 +137,14 @@ replace('build-scripts/build-step-arm64ec.sh',
         '    _NTS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/android/ntsync_android"\n'
         '    cp "$_NTS/LICENSE" "$_NTS/NOTICE" "$OUTPUT_DIR/share/licenses/ntsync-android/" || exit $?\n', '')
 
-# Build host generators without requiring 32-bit FreeType development headers.
+# Build the host generators 64-bit: they need no 32-bit target, and sfnt2fon
+# needs the host FreeType (libfreetype6-dev) to build fonts/*.fon.
 step0 = root / 'build-scripts/build-step0.sh'
 script = step0.read_text()
 configure = '../configure --without-x --without-gstreamer --without-vulkan --without-wayland'
 if script.count(configure) != 1:
     raise SystemExit('Patch anchor changed: build-step0.sh configure')
-script = script.replace(configure, configure + ' --without-freetype --without-fontconfig', 1)
+script = script.replace(configure, configure + ' --enable-win64 --with-freetype --without-fontconfig', 1)
 if script.startswith('#!'):
     split = script.index('\n') + 1
     script = script[:split] + 'set -eu\n' + script[split:]
