@@ -17,6 +17,19 @@ def replace(path, old, new):
     file.write_text(data.replace(old, new, 1))
 
 
+
+# Wine's host winebuild otherwise discovers Ubuntu's LLVM 18 dlltool even
+# when the Android cross-compiler uses the pinned llvm-mingw toolchain.
+# Honour an explicit DLLTOOL in the host generator, fail-closed if missing.
+replace('tools/winebuild/utils.c',
+        '    if (!names)\\n    {',
+        '    if (!strcmp( name, "dlltool" ) && getenv( "DLLTOOL" ))\\n'
+        '    {\\n'
+        '        strarray_add( &ret, getenv( "DLLTOOL" ) );\\n'
+        '        return ret;\\n'
+        '    }\\n'
+        '    if (!names)\\n    {')
+
 replace('build-scripts/build-step-arm64ec.sh', '--enable-wineandroid_drv=no', '--enable-wineandroid_drv=yes')
 
 # The pinned upstream Makefile has a real tab before 'window.c' and a

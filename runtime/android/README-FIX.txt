@@ -1,0 +1,1 @@
+Replace both runtime/android/patch-wine.py and runtime/android/build-wine.sh. Do not change build.yml. This selects pinned llvm-mingw ARM64EC dlltool for Wine's host winebuild and fails early if it lacks support. Existing FEX, graphics, iOS and their caches are unchanged. The complete Wine compilation remains unverified.\n
