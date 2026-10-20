@@ -19,11 +19,14 @@ stage.mkdir(parents=True)
 for name in (wine,'fex'):
     shutil.copytree(out/name,stage,dirs_exist_ok=True,symlinks=False)
 shutil.copytree(out/'graphics',stage/'graphics',dirs_exist_ok=True)
+shutil.copytree(out/'addons',stage,dirs_exist_ok=True)
 required=['bin/wine','bin/wineserver','lib/wine/aarch64-unix/ntdll.so',
 'lib/wine/aarch64-unix/wineandroid.so','lib/wine/aarch64-unix/winevulkan.so',
 'lib/wine/aarch64-unix/libarm64ecfex.so','lib/wine/aarch64-unix/libwow64fex.so',
 'lib/wine/aarch64-windows/libarm64ecfex.dll','lib/wine/aarch64-windows/libwow64fex.dll',
 'lib/wine/aarch64-windows/kernel32.dll','lib/wine/i386-windows/kernel32.dll']
+required += ['addons/dock/dockhost.exe','addons/xinput/x64/xinput_pocket.dll','addons/xinput/x86/xinput_pocket.dll',
+             'share/licenses/madeira-dock/LICENSE']
 for arch in ('x64','x86'):
     required += [f'graphics/dxvk/{arch}/{n}.dll' for n in ('d3d9','d3d10core','d3d11','dxgi')]
     required += [f'graphics/vkd3d/{arch}/{n}.dll' for n in ('d3d12','d3d12core')]

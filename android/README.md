@@ -1,3 +1,47 @@
+# Pocket Arcade for Android, built on Madeira
+
+The app is now a port of Madeira's iOS interface and Steam client to Android
+(Kotlin, Jetpack Compose), licensed GPL-3.0-or-later like Madeira
+(`COPYING`, `LICENSE-EXCEPTION.md`; files ported from Madeira keep its SPDX and
+copyright lines).
+
+What the app does:
+
+- **Setup** on first start: Steam sign-in, Madeira Dock's components, Wine Mono.
+- **Steam sign-in** with password + Steam Guard (email or authenticator code, or
+  approval in the Steam Mobile app), or a QR code. Only the refresh token is
+  kept, encrypted with an Android Keystore key.
+- **Library**: Steam games with their artwork, playtime and last played, games
+  not installed yet, and games added by hand; search, sort, three layouts, pull
+  to refresh, Liquid Metal title and ambient artwork glow.
+- **Downloads** from Steam's CDN (port of SwiftSteam: PICS, depot keys,
+  manifests, AES + VZ/VSZa/zip chunks, resumable journals, `.acf` records),
+  in a foreground service, with pause, resume, update, check files and uninstall.
+- **Steam Cloud** saves: sync before and after a session, conflicts resolved by
+  your choice, replaced copies kept as backups.
+- **Madeira Dock**: Steam games start through Valve's own client (downloaded
+  from Valve, SHA-256-pinned) with `dockhost.exe` from willfaust/madeira-dock,
+  including the games' one-time installs. "Start with › The game" skips Steam.
+- **In game**: touch controls (Xbox layout and a keyboard layout, editable), an
+  XInput bridge so physical controllers and touch controls appear as Xbox pads,
+  keyboard/mouse mode, an on-screen keyboard, FPS overlay, and a session menu.
+- **Per-game settings**: graphics (Auto picks DXVK/VKD3D/Wine from the program's
+  imports), touch controls, performance overlay, arguments, environment, DLL
+  overrides, runtimes (Visual C++, installers).
+
+The original test interface (`MainActivity`) is still in the APK under
+Settings › Troubleshooting › Developer tools.
+
+CI: `android_app` runs the Kotlin unit tests (`gradle testDebugUnitTest`) and
+builds an APK without the Windows runtime in a few minutes. The `addons`
+component builds `dockhost.exe` and the XInput bridge DLLs; `package-runtime.py`
+requires them in the runtime.
+
+Steam is a trademark of Valve Corporation. This project is not affiliated with
+Valve; Valve's client components are downloaded from Valve on request.
+
+---
+
 # Madeira Android port candidate — source integration, not a verified release
 
 This revision replaces the externally supplied launcher as the primary Android

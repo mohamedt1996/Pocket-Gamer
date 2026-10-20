@@ -1,0 +1,17 @@
+LIBRARY xinput_pocket.dll
+EXPORTS
+    DllMain
+    XInputGetState
+    XInputSetState
+    XInputGetCapabilities
+    XInputEnable
+    XInputGetDSoundAudioDeviceGuids
+    XInputGetBatteryInformation
+    XInputGetKeystroke
+    XInputGetAudioDeviceIds
+    XInputGetStateEx @100 NONAME
+    XInputWaitForGuideButton @101 NONAME
+    XInputCancelGuideButtonWait @102 NONAME
+    XInputPowerOffController @103 NONAME
+    XInputGetBaseBusInformation @104 NONAME
+    XInputGetCapabilitiesEx @108 NONAME
