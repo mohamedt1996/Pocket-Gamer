@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
-"""Patch the pinned Proton Wine source, fail-closed on unexpected upstream edits."""
+"""Patch a pinned Wine source, fail-closed on unexpected upstream edits.
+
+usage: patch-wine.py WINE_SRC [--madeira]
+
+Without --madeira the source is the Proton Android fork (sources.json "wine")
+and its build-scripts/ are adjusted too. With --madeira the source is
+Madeira's Wine (sources.json "madeira-wine"), which has no build-scripts/;
+only the Pocket-Gamer integration shared by both variants is applied.
+"""
 from pathlib import Path
 import shutil
 import sys
 
-root = Path(sys.argv[1]).resolve()
+args = [a for a in sys.argv[1:] if not a.startswith('--')]
+madeira = '--madeira' in sys.argv[1:]
+root = Path(args[0]).resolve()
 here = Path(__file__).resolve().parent
 
 
@@ -30,8 +40,6 @@ replace('tools/winebuild/utils.c',
         '    }\n'
         '    if (!names)\n    {')
 
-replace('build-scripts/build-step-arm64ec.sh', '--enable-wineandroid_drv=no', '--enable-wineandroid_drv=yes')
-
 # The pinned upstream Makefile has a real tab before 'window.c' and a
 # *real* newline after its continuation backslash. Avoid the old broken
 # '\\t' / '\\n' double-escaping, which searched for literal slash characters.
@@ -40,6 +48,17 @@ replace('dlls/wineandroid.drv/Makefile.in',
         '\twindow.c \\\n\tmadeira_vulkan.c \\\n')
 shutil.copyfile(here / 'patches/wineandroid_vulkan.c',
                 root / 'dlls/wineandroid.drv/madeira_vulkan.c')
+if madeira:
+    # Both trees report WINE_VULKAN_DRIVER_VERSION 47, but Proton's
+    # p_vulkan_surface_create takes an extra BOOL that upstream 11.4 lacks.
+    # The adapter ignores it, so drop it for Madeira's (upstream) signature.
+    replace('dlls/wineandroid.drv/madeira_vulkan.c',
+            'static VkResult surface_create(HWND hwnd, BOOL raw, const struct vulkan_instance *instance,',
+            'static VkResult surface_create(HWND hwnd, const struct vulkan_instance *instance,')
+    replace('dlls/wineandroid.drv/madeira_vulkan.c', '    (void)raw;\n', '')
+# Wine would otherwise also build its demo wine-debug.apk with Gradle. The
+# app ships its own activity (WineActivity.java is copied out), so skip it.
+replace('dlls/wineandroid.drv/Makefile.in', '\nEXTRA_TARGETS = wine-debug.apk\n', '\n')
 replace('dlls/wineandroid.drv/init.c',
         '    .pOpenGLInit = ANDROID_OpenGLInit,',
         '    .pOpenGLInit = ANDROID_OpenGLInit,\n    .pVulkanInit = ANDROID_VulkanInit,')
@@ -54,6 +73,30 @@ replace('dlls/ntdll/unix/loader.c',
         '    char error[1024];\n    int i, argc, length;',
         '    char error[1024] = "Wine initialization returned unexpectedly";\n'
         '    int i, argc, length;')
+
+if madeira:
+    sys.exit(0)
+
+# ---- Proton Android fork only: adjust its build-scripts/ ----
+replace('build-scripts/build-step-arm64ec.sh', '--enable-wineandroid_drv=no', '--enable-wineandroid_drv=yes')
+
+# Drop GameNative's userspace ntsync. It is opt-in at runtime (WINENTSYNC=1;
+# esync stays the default), and its patch is the only thing that links
+# -lntsync_android, so removing the patch and its source markers leaves the
+# esync path unchanged. The vendored LICENSE/NOTICE are no longer shipped.
+replace('build-scripts/build-step-arm64ec.sh',
+        '\t  # userspace ntsync, OPT-IN at runtime (WINENTSYNC=1); must follow esync\n'
+        '\t  "ntsync_userspace.patch"\n', '')
+for marker in (
+        '      "server/inproc_sync.c|WINENTSYNC set, no usable /dev/ntsync, using userspace ntsync|userspace ntsync, opt-in via WINENTSYNC=1 (server)"\n',
+        '      "dlls/ntdll/unix/esync.c|if (ntsync_opt_in_active) return 0;|esync steps aside only under the WINENTSYNC opt-in (client)"\n',
+        '      "dlls/ntdll/unix/sync.c|userspace_wait_objs|userspace ntsync wait path (client)"\n'):
+    replace('build-scripts/build-step-arm64ec.sh', marker, '')
+replace('build-scripts/build-step-arm64ec.sh',
+        '    # ntsync-android (statically linked, LGPL-3.0-only): ship its licence + provenance.\n'
+        '    mkdir -p "$OUTPUT_DIR/share/licenses/ntsync-android"\n'
+        '    _NTS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/android/ntsync_android"\n'
+        '    cp "$_NTS/LICENSE" "$_NTS/NOTICE" "$OUTPUT_DIR/share/licenses/ntsync-android/" || exit $?\n', '')
 
 # Build host generators without requiring 32-bit FreeType development headers.
 step0 = root / 'build-scripts/build-step0.sh'

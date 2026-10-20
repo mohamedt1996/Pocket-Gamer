@@ -17,15 +17,12 @@ if ! grep -Eiq '(^|[[:space:],])arm64ec([[:space:],]|$)' <<< "$dlltool_help"; th
 fi
 echo "ARM64EC import tool: $DLLTOOL"
 python3 "$ROOT/runtime/android/fetch.py" wine "$SRC"
-python3 "$ROOT/runtime/android/fetch.py" ntsync "$ROOT/.android-work/ntsync"
-export NTSYNC_ANDROID_DIR="$ROOT/.android-work/ntsync"
 python3 "$ROOT/runtime/android/patch-wine.py" "$SRC"
 cd "$SRC"
 bash build-scripts/build-step0-autogen.sh
 python3 dlls/winevulkan/make_vulkan
 bash build-scripts/build-step0.sh
 bash build-scripts/build-step-arm64ec.sh --build-sysvshm
-bash build-scripts/build-step-arm64ec.sh --build-ntsync-android
 bash build-scripts/build-step-arm64ec.sh --enable-16kb-pages --configure
 make -j2
 bash build-scripts/build-step-arm64ec.sh --enable-16kb-pages --install

@@ -1,0 +1,80 @@
+From 4d69ff9a4c390286ab96ee2c60b5663e9a6fba7d Mon Sep 17 00:00:00 2001
+From: port <p@p>
+Date: Tue, 20 Oct 2026 12:38:45 +0000
+Subject: [PATCH] nsiproxy: Enumerate network interfaces with getifaddrs() on
+ Android
+
+---
+ dlls/nsiproxy.sys/ndis.c | 40 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 40 insertions(+)
+
+diff --git a/dlls/nsiproxy.sys/ndis.c b/dlls/nsiproxy.sys/ndis.c
+index db4d2e4..8c69e04 100644
+--- a/dlls/nsiproxy.sys/ndis.c
++++ b/dlls/nsiproxy.sys/ndis.c
+@@ -67,6 +67,9 @@
+ #endif
+ 
+ #include <pthread.h>
++#ifdef __ANDROID__
++#include <ifaddrs.h>
++#endif
+ 
+ #include "ntstatus.h"
+ #include "windef.h"
+@@ -293,6 +296,16 @@ static struct if_entry *add_entry( UINT index, char *name )
+     }
+ 
+     if_get_physical( name, &entry->if_type, &entry->if_phys_addr );
++#ifdef __ANDROID__
++    /* Android 11+ denies apps the hardware address query; classify by name. */
++    if (entry->if_type == MIB_IF_TYPE_OTHER)
++    {
++        if (!strncmp( name, "lo", 2 )) entry->if_type = MIB_IF_TYPE_LOOPBACK;
++        else if (!strncmp( name, "wlan", 4 )) entry->if_type = IF_TYPE_IEEE80211;
++        else if (!strncmp( name, "eth", 3 ) || !strncmp( name, "en", 2 )) entry->if_type = MIB_IF_TYPE_ETHERNET;
++        else if (!strncmp( name, "rmnet", 5 ) || !strncmp( name, "ccmni", 5 )) entry->if_type = MIB_IF_TYPE_PPP;
++    }
++#endif
+ 
+     entry->if_luid.Info.Reserved = 0;
+     entry->if_luid.Info.NetLuidIndex = index;
+@@ -306,11 +319,38 @@ static struct if_entry *add_entry( UINT index, char *name )
+     return entry;
+ }
+ 
++#ifdef __ANDROID__
++/* Android 11+ blocks the RTM_GETLINK netlink dump that if_nameindex() relies
++ * on, while getifaddrs() keeps working, so fall back to it. */
++static unsigned int update_if_table_ifaddrs( void )
++{
++    struct ifaddrs *addrs, *ifa;
++    unsigned int append_count = 0, index;
++
++    if (getifaddrs( &addrs )) return 0;
++    for (ifa = addrs; ifa; ifa = ifa->ifa_next)
++    {
++        if (!ifa->ifa_name || !(index = if_nametoindex( ifa->ifa_name ))) continue;
++        if (!find_entry_from_index( index ) && add_entry( index, ifa->ifa_name ))
++            ++append_count;
++    }
++    freeifaddrs( addrs );
++    return append_count;
++}
++#endif
++
+ static unsigned int update_if_table( void )
+ {
+     struct if_nameindex *indices = if_nameindex(), *entry;
+     unsigned int append_count = 0;
+ 
++#ifdef __ANDROID__
++    if (!indices || !indices->if_index)
++    {
++        if (indices) if_freenameindex( indices );
++        return update_if_table_ifaddrs();
++    }
++#endif
+     if (!indices) return 0;
+     for (entry = indices; entry->if_index; entry++)
+     {

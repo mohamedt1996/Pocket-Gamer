@@ -1,0 +1,25 @@
+From 69307c5b13733cacdb13559adf724a821ebf5979 Mon Sep 17 00:00:00 2001
+From: port <p@p>
+Date: Tue, 20 Oct 2026 14:36:50 +0000
+Subject: [PATCH] win32u: Make Madeira's srcwatch fallback hook optional
+
+ios_srcwatch_arm() is defined only by the iOS app; declare it weak and check it, like ios_srcwatch_arm_geom() next to it, so win32u.so links and loads elsewhere.
+---
+ dlls/win32u/dibdrv/bitblt.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/win32u/dibdrv/bitblt.c b/dlls/win32u/dibdrv/bitblt.c
+index fa1f842..2c9c87c 100644
+--- a/dlls/win32u/dibdrv/bitblt.c
++++ b/dlls/win32u/dibdrv/bitblt.c
+@@ -1062,7 +1062,9 @@ DWORD dibdrv_PutImage( PHYSDEV dev, HRGN clip, BITMAPINFO *info,
+                                    gw, gh, gw * 4 );
+         }
+         else {
+-        extern void ios_srcwatch_arm( const void *bits, unsigned long len );
++        /* weak like ios_srcwatch_arm_geom: only the iOS app defines it */
++        extern void ios_srcwatch_arm( const void *bits, unsigned long len ) __attribute__((weak));
++        if (ios_srcwatch_arm)
+         ios_srcwatch_arm( bits->ptr,
+                           (unsigned long)info->bmiHeader.biSizeImage ?
+                               (unsigned long)info->bmiHeader.biSizeImage :

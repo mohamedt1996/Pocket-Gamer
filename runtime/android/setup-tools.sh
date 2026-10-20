@@ -16,11 +16,11 @@ if [ ! -x "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android2
   ln -s "$SDK/ndk/27.3.13750724" "$NDK"
 fi
 printf 'LLVM_MINGW=%s\nANDROID_NDK_HOME=%s\n' "$MINGW" "$NDK" >> "$GITHUB_ENV"
-if [ "${1:-}" = wine ]; then
+if [ "${1:-}" = wine ] || [ "${1:-}" = wine-madeira ]; then
   DEST="$HOME/termuxfs/aarch64"
   if [ ! -d "$DEST/data/data/com.termux/files/usr/lib" ]; then
-    mkdir -p "$DEST"
-    curl -fL --retry 3 https://github.com/GameNative/termux-on-gha/releases/download/build-20260218/termuxfs-aarch64.tar -o "$RUNNER_TEMP/termuxfs.tar"
-    tar -xf "$RUNNER_TEMP/termuxfs.tar" -C "$DEST"
+    # Official Termux packages (termux-main + termux-x11), SHA256-checked
+    # against the repo index; no third-party prebuilt filesystem.
+    python3 "$(dirname "$0")/termux-deps.py" "$DEST"
   fi
 fi

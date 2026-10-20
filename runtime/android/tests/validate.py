@@ -6,7 +6,10 @@ root=Path(__file__).resolve().parents[3]
 for p in (root/'runtime/android').glob('*.py'): py_compile.compile(str(p),doraise=True)
 for p in (root/'runtime/android').glob('*.sh'): subprocess.run(['bash','-n',str(p)],check=True)
 lock=json.loads((root/'runtime/android/sources.json').read_text())
-assert set(lock)=={'wine','fex','dxvk','vkd3d','ntsync'}
+assert set(lock)=={'wine','fex','dxvk','vkd3d','madeira-wine','madeira','directaudio'}
+# No GameNative-hosted sources or prebuilt filesystems.
+for p in (root/'runtime/android').glob('*'):
+    if p.is_file(): assert 'github.com/GameNative' not in p.read_text(errors='ignore'), p
 for value in lock.values():
     assert value['url'].startswith('https://github.com/')
     assert len(value['commit'])==40 and all(c in '0123456789abcdef' for c in value['commit'])
@@ -32,4 +35,8 @@ int main(int argc,char **argv) {
 ''')
     subprocess.run(['gcc','-Wall','-Wextra',str(source),'-o',str(exe)],check=True)
     subprocess.run([str(exe),temp],check=True)
+# Madeira port patches: numbered, git-format, each touching only Wine sources.
+patches=sorted((root/'runtime/android/madeira/patches').glob('*.patch'))
+assert patches and [p.name[:4] for p in patches]==[f'{i:04d}' for i in range(1,len(patches)+1)]
+for p in patches: assert p.read_text().startswith('From '), p
 print('PASS: Python, shell, source-lock validation and compiled shared-memory adapter test')
