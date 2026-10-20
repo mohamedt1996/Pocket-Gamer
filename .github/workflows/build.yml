@@ -1319,62 +1319,136 @@ jobs:
         path: runtime-packages/
         if-no-files-found: error
 
-  android_port:
-    name: Android Madeira port (requires real native sources)
+  android_components:
+    name: "Android source build \u2022 ${{ matrix.component }}"
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+        - wine
+        - fex
+        - graphics
     steps:
     - uses: actions/checkout@v4
+    - name: Compute component source key
+      id: source_key
+      run: echo "value=$(python3 runtime/android/component-key.py '${{ matrix.component }}')" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v4
       with:
-        submodules: recursive
+        path: ~/.ccache
+        key: android-ccache-${{ matrix.component }}-${{ steps.source_key.outputs.value }}
+        restore-keys: android-ccache-${{ matrix.component }}-
+    - uses: actions/cache@v4
+      id: component
+      with:
+        path: .android-out/${{ matrix.component }}
+        key: android-native-v2-${{ matrix.component }}-${{ steps.source_key.outputs.value }}
+    - name: Install native build tools
+      if: steps.component.outputs.cache-hit != 'true'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git curl unzip flex bison gettext autoconf automake libtool pkg-config ninja-build cmake meson glslang-tools mingw-w64 gcc-multilib g++-multilib libwayland-bin libfreetype6-dev libpng-dev zlib1g-dev ccache python3-ply
+    - uses: actions/cache@v4
+      if: steps.component.outputs.cache-hit != 'true'
+      with:
+        path: |-
+          ~/toolchains
+          ~/Android/Sdk/ndk/27.3.13750724
+          ~/termuxfs/aarch64
+        key: android-tools-bylaws20250920-ndk27d-termux20260218-v1-${{ matrix.component }}
+    - name: Set up pinned toolchains
+      if: steps.component.outputs.cache-hit != 'true'
+      run: bash runtime/android/setup-tools.sh "${{ matrix.component }}"
+    - uses: dtolnay/rust-toolchain@stable
+      if: matrix.component == 'wine' && steps.component.outputs.cache-hit != 'true'
+      with:
+        targets: aarch64-linux-android
+    - name: Compile component from pinned source
+      if: steps.component.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p .android-logs
+        bash "runtime/android/build-${{ matrix.component }}.sh" 2>&1 | tee ".android-logs/${{ matrix.component }}.log"
+    - name: Upload component
+      uses: actions/upload-artifact@v4
+      with:
+        name: Android-component-${{ matrix.component }}
+        path: .android-out/${{ matrix.component }}
+        if-no-files-found: error
+        include-hidden-files: true
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: Android-logs-${{ matrix.component }}
+        path: .android-logs
+        if-no-files-found: ignore
+        include-hidden-files: true
+  android_port:
+    name: Package Android Wine/FEX port candidate
+    needs: android_components
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v4
     - uses: actions/setup-java@v4
       with:
         distribution: temurin
         java-version: '17'
-    - name: Configure Android SDK (without obsolete tools package)
+    - uses: actions/download-artifact@v4
+      with:
+        name: Android-component-wine
+        path: .android-out/wine
+    - uses: actions/download-artifact@v4
+      with:
+        name: Android-component-fex
+        path: .android-out/fex
+    - uses: actions/download-artifact@v4
+      with:
+        name: Android-component-graphics
+        path: .android-out/graphics
+    - name: Assemble and verify runtime bundle
+      run: python3 runtime/android/package-runtime.py
+    - name: Configure SDK and NDK
       shell: bash
       run: |
         set -euo pipefail
         SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-        echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+        SDKMANAGER=$(find "$SDK/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)
+        "$SDKMANAGER" --sdk_root="$SDK" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.3.13750724' 'cmake;3.22.1'
         echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-        SDKMANAGER="$(find "$SDK/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort -V | tail -1)"
-        test -x "$SDKMANAGER" || { echo '::error::Android sdkmanager missing on runner'; exit 1; }
-        "$SDKMANAGER" --sdk_root="$SDK" --install \
-          'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
-        yes | "$SDKMANAGER" --sdk_root="$SDK" --licenses > /dev/null || test "${PIPESTATUS[1]}" -eq 0
-    - name: Install Android native build dependencies
-      shell: bash
-      run: |
-        set -euo pipefail
-        SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-        SDKMANAGER="$(find "$SDK/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort -V | tail -1)"
-        "$SDKMANAGER" --sdk_root="$SDK" --install 'ndk;27.2.12479018' 'cmake;3.22.1'
     - uses: gradle/actions/setup-gradle@v4
       with:
         gradle-version: '8.9'
-    - name: Verify Android port exists
-      shell: bash
-      run: |
-        set -euo pipefail
-        if [ ! -f android/settings.gradle.kts ] || [ ! -f android/app/build.gradle.kts ]; then
-          echo '::notice::Android native Madeira/FEX/Wine port has not been implemented in this repository; skipping APK instead of publishing a nonfunctional shell.'
-          echo 'ANDROID_PORT_PRESENT=false' >> "$GITHUB_ENV"
-        else
-          echo 'ANDROID_PORT_PRESENT=true' >> "$GITHUB_ENV"
-        fi
-    - name: Build Android APK
-      if: env.ANDROID_PORT_PRESENT == 'true'
+    - name: Build bundled Android APK
       working-directory: android
+      run: gradle --no-daemon assembleDebug
+    - name: Confirm APK contains runtime
       run: |
-        gradle --no-daemon assembleDebug
-    - name: Publish Android build artifact
-      if: env.ANDROID_PORT_PRESENT == 'true'
-      uses: actions/upload-artifact@v4
+        python3 - <<'PYAPK'
+        import zipfile,pathlib
+        for apk in pathlib.Path('android/app/build/outputs/apk/debug').glob('*.apk'):
+            with zipfile.ZipFile(apk) as z:
+                assert z.getinfo('assets/madeira-runtime.zip').file_size > 1000000
+                assert z.getinfo('lib/arm64-v8a/libmadeira_probe.so').file_size > 0
+        PYAPK
+    - uses: actions/upload-artifact@v4
       with:
         name: Madeira-Android-runtime-lab-debug
         path: android/app/build/outputs/apk/debug/*.apk
         if-no-files-found: error
+        include-hidden-files: true
+    - uses: actions/upload-artifact@v4
+      with:
+        name: Madeira-Android-source-lock-and-notices
+        path: |-
+          runtime/android
+          .android-out/bundle/share/licenses
+        if-no-files-found: error
+        include-hidden-files: true
 
   publish_ios:
     name: Separate iOS release
@@ -1420,7 +1494,7 @@ jobs:
         test "${#apks[@]}" -gt 0 || { echo 'No Android APK built; no Android release'; exit 1; }
         gh release create "android-build-${GITHUB_RUN_NUMBER}" "${apks[@]}" \
           --title "Madeira Android build ${GITHUB_RUN_NUMBER}" \
-          --notes 'Android native runtime lab only. FEX/Wine/DXVK and Windows game execution are not implemented.' \
+          --notes 'Experimental Android port candidate: Wine ARM64EC, FEX, DXVK and VKD3D compiled from locked sources. Android window adapter and game execution remain unverified on physical devices.' \
           --prerelease
 'on':
   push:

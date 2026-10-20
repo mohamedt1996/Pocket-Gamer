@@ -1,0 +1,22 @@
+{
+  "wine": {
+    "url": "https://github.com/The412Banner/proton-wine.git",
+    "commit": "256288853b206373cbf65b775143d33bb11035dd"
+  },
+  "fex": {
+    "url": "https://github.com/FEX-Emu/FEX.git",
+    "commit": "d7b8e1497a646fa7cdf63c38215c1f7c3a52852f"
+  },
+  "vkd3d": {
+    "url": "https://github.com/HansKristian-Work/vkd3d-proton.git",
+    "commit": "0bb64c56c8f0dcc11ecc0f6c56e00e4f7bd8d506"
+  },
+  "ntsync": {
+    "url": "https://github.com/GameNative/ntsync-android.git",
+    "commit": "7ce6435e5979b1cb5341aa4b299f31e8937fe121"
+  },
+  "dxvk": {
+    "url": "https://github.com/doitsujin/dxvk.git",
+    "commit": "ef3ef8712ecfd619775662ee8d2778bf7db89af4"
+  }
+}

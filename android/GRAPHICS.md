@@ -1,28 +1,31 @@
-# Experimental Android graphics path
+# Graphics implementation and verification boundary
 
-This project now executes **real Vulkan API operations** on Android: it enumerates GPUs, creates a logical device and graphics queue, allocates a 64x64 GPU image, records a layout transition and clear command, submits it and waits for completion. This proves that the Android app can access its device's Vulkan driver; it is **not** a D3D translation layer, swapchain renderer or Windows game.
+The original JNI Vulkan diagnostics remain available: offscreen clear, surface
+capabilities and a blue swapchain frame. These execute outside Wine.
 
-## Windows graphics requirements
+The new `runtime/android/patches/wineandroid_vulkan.c` is different: it plugs into
+Wine's `user_driver_funcs.pVulkanInit` and the version-47 Vulkan driver interface.
+It obtains an HWND-associated Android native-window wrapper using Wine's own
+window IPC, creates a VkAndroidSurfaceKHR, and retains the wrapper through the
+Wine client-surface lifetime. Wine win32u owns the Vulkan surface destruction.
 
-- **DXVK**: Windows `d3d9.dll`, `d3d10core.dll`, `d3d11.dll`, `dxgi.dll` compatible with the chosen Wine/FEX x86/x64 guest ABI. Source: https://github.com/doitsujin/dxvk
-- **VKD3D-Proton**: Windows `d3d12.dll` and `d3d12core.dll`, matching the guest ABI and Vulkan driver features. Source: https://github.com/HansKristian-Work/vkd3d-proton
-- **Wine**: Android-compatible Wine, Vulkan ICD dispatch, `winevulkan` and working window/surface bridge; graphics DLL overrides must be set per game/prefix.
-- **FEX**: Android-compatible guest translation and Wine launcher with a compatible sysroot. Upstream Madeira's iOS Metal backend cannot be used as an Android Vulkan backend unchanged.
+`patch-wine.py` adds VK_KHR_android_surface to Wine's unexposed host extensions
+and regenerates its Vulkan headers and dispatch tables. Windows applications
+continue to request VK_KHR_win32_surface. DXVK and VKD3D-Proton are compiled as
+x86/x64 Windows DLLs; FEX translates their CPU instructions. They are not ARM64EC
+optimized builds in this revision.
 
-The runtime ZIP importer can report whether these Windows DLL filenames are present. Presence is **not** evidence of loadability or game compatibility. This build intentionally does not download unverified binary releases and falsely call them an Android port.
+The per-game graphics option sets DLL overrides and installs the appropriate
+x64 DLLs in system32 and x86 DLLs in syswow64. Selecting Wine built-ins forces
+builtin overrides, so previously copied native DLLs do not remain active.
 
-## Test
+Unverified: native-window IPC compatibility with current vendor Vulkan loaders,
+resize/surface-loss behavior, graphics feature availability, game performance,
+and the complete D3D12 presentation path. No desktop Vulkan driver or iOS Metal
+backend is presented as an Android graphics driver.
 
-Install the debug APK on an ARM64 Android device. Tap **Test real Vulkan GPU commands**. A successful result prints `64x64 GPU image clear: PASS`. This tests offscreen Vulkan command submission, not on-screen presentation. After providing a genuinely working Android ARM64 Wine/FEX runtime, use **Import runtime ZIP** and attempt a Windows EXE. A launch failure should be diagnosed using its exit code and logs.
-
-## Android WSI experiment
-The SurfaceView JNI bridge creates a real VkSurfaceKHR using VK_KHR_android_surface, queries present-capable queues and surface capabilities, then releases all handles. It does not render a Wine window or include FEX/Wine/DXVK/VKD3D binaries. The imported runtime remains externally supplied.
-
-
-## Swapchain presentation experiment
-The `Render blue Vulkan swapchain frame` button creates an Android Vulkan
-swapchain, acquires an image, clears it to blue, and presents it on SurfaceView.
-It validates actual Vulkan WSI presentation (beyond surface enumeration).
-This does **not** implement Wine window mapping, FEX, DXVK, or VKD3D-Proton.
-If this fails on a device, preserve the reported VkResult and GPU model.
-The native rendering step has not been compiled or device-tested here.
+References:
+- https://github.com/The412Banner/proton-wine
+- https://wiki.fex-emu.com/index.php/Development:ARM64EC
+- https://github.com/doitsujin/dxvk
+- https://github.com/HansKristian-Work/vkd3d-proton
