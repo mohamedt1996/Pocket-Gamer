@@ -201,7 +201,10 @@ class WineLaunch private constructor(
             env["HOME"] = home.absolutePath
             env["TMPDIR"] = tmp.absolutePath
             env["WINEPREFIX"] = prefix.absolutePath
-            env["WINELOADER"] = File(root, "bin/wine").absolutePath
+            // Wine's loader finds ntdll.so next to itself. bin/wine is a plain copy once the runtime
+            // is zipped (no symlinks), so every process Wine starts through it would fail with
+            // "could not load ntdll.so". Children are exec'd through WINELOADER: use the real one.
+            env["WINELOADER"] = loader(root).absolutePath
             env["WINESERVER"] = File(root, "bin/wineserver").absolutePath
             env["WINEDLLPATH"] = File(root, "lib/wine").absolutePath
             env["WINEDEBUGLOG"] = File(home, "wine.log").absolutePath
@@ -252,6 +255,10 @@ class WineLaunch private constructor(
             for ((k, v) in spec.environment) env[k] = v
             return env
         }
+
+        /** Wine's own loader, beside ntdll.so. */
+        @JvmStatic
+        fun loader(root: File) = File(root, "lib/wine/aarch64-unix/wine")
 
         const val XINPUT_NAMES = "xinput1_1.dll,xinput1_2.dll,xinput1_3.dll,xinput1_4.dll,xinput9_1_0.dll"
     }

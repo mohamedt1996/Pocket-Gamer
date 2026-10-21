@@ -76,7 +76,7 @@ public final class PortRuntime {
   org.pocketarcade.madeira.session.WineLaunch.seedRegistry(p);
   HashMap<String,String> env=new HashMap<>();
   env.put("HOME",gameDir(id).getAbsolutePath());env.put("TMPDIR",tmp.getAbsolutePath());
-  env.put("WINEPREFIX",p.getAbsolutePath());env.put("WINELOADER",new File(root(),"bin/wine").getAbsolutePath());
+  env.put("WINEPREFIX",p.getAbsolutePath());env.put("WINELOADER",org.pocketarcade.madeira.session.WineLaunch.loader(root()).getAbsolutePath());
   env.put("WINESERVER",new File(root(),"bin/wineserver").getAbsolutePath());
   env.put("WINEDLLPATH",new File(root(),"lib/wine").getAbsolutePath());
   env.put("WINEDEBUGLOG",new File(gameDir(id),"wine.log").getAbsolutePath());env.put("WINEDEBUG","+timestamp,+pid,+seh");

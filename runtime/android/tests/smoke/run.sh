@@ -64,7 +64,7 @@ printf 'WINE REGISTRY Version 2\n\n#arch=win64\n\n[Software\\\\Wine\\\\Drivers]\
 # env -i: nothing from the host leaks in, LD_LIBRARY_PATH included.
 WINEENV=(
   HOME="$GAME" TMPDIR="$GAME/tmp" WINEPREFIX="$PREFIX"
-  WINELOADER="$RT/bin/wine" WINESERVER="$RT/bin/wineserver" WINEDLLPATH="$RT/lib/wine"
+  WINELOADER="$RT/lib/wine/aarch64-unix/wine" WINESERVER="$RT/bin/wineserver" WINEDLLPATH="$RT/lib/wine"
   WINEDEBUG="+timestamp,+pid,+seh,err+all,warn+module" PATH="$RT/bin:/system/bin"
   LC_ALL=C.UTF-8 LANG=C.UTF-8 WINEESYNC=0 WINEFSYNC=0 WINENTSYNC=0
   XDG_CACHE_HOME="$APP/wine-cache" ANDROID_ROOT=/system ANDROID_DATA=/data
@@ -72,8 +72,8 @@ WINEENV=(
 )
 WINE=(env -i "${WINEENV[@]}")
 
-step loader-version 60 "${WINE[@]}" "$RT/bin/wine" --version
-step wineboot 1500 "${WINE[@]}" "$RT/bin/wine" wineboot --init
+step loader-version 60 "${WINE[@]}" "$RT/lib/wine/aarch64-unix/wine" --version
+step wineboot 1500 "${WINE[@]}" "$RT/lib/wine/aarch64-unix/wine" wineboot --init
 env -i "${WINEENV[@]}" timeout 120 "$RT/bin/wineserver" -w || true
 grep -q '^#arch=win64' "$PREFIX/system.reg" || { echo "::error title=prefix::system.reg lost #arch=win64"; failed=1; }
 cp "$PREFIX/system.reg" "$PREFIX/user.reg" "$LOGS/" 2>/dev/null
@@ -82,8 +82,8 @@ cp "$PREFIX/system.reg" "$PREFIX/user.reg" "$LOGS/" 2>/dev/null
 mkdir -p "$PREFIX/drive_c/smoke"
 cp "$TESTS"/*.exe "$PREFIX/drive_c/smoke/"
 cd "$PREFIX/drive_c/smoke"
-step cli-x64 600 "${WINE[@]}" "$RT/bin/wine" 'C:\smoke\cli-x86_64.exe'
-step cli-x86 600 "${WINE[@]}" "$RT/bin/wine" 'C:\smoke\cli-i686.exe'
+step cli-x64 600 "${WINE[@]}" "$RT/lib/wine/aarch64-unix/wine" 'C:\smoke\cli-x86_64.exe'
+step cli-x86 600 "${WINE[@]}" "$RT/lib/wine/aarch64-unix/wine" 'C:\smoke\cli-i686.exe'
 
 # Graphics devices: DXVK and VKD3D installed into the prefix as WineLaunch does,
 # with lavapipe behind Android's libvulkan.so name.
@@ -93,8 +93,8 @@ cp "$RT"/graphics/dxvk/x86/*.dll "$RT"/graphics/vkd3d/x86/*.dll "$WOW/"
 ICD=$(ls "$TERMUX"/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)
 GFX=(WINEDLLOVERRIDES="mscoree,mshtml=d;d3d8,d3d9,d3d10core,d3d11,dxgi=n,b;d3d12,d3d12core=n,b"
      VK_ICD_FILENAMES="$ICD" DXVK_LOG_LEVEL=info VKD3D_DEBUG=warn DXVK_LOG_PATH=none)
-step devices-x64 600 "${WINE[@]}" "${GFX[@]}" "$RT/bin/wine" 'C:\smoke\devices-x86_64.exe'
-step devices-x86 600 "${WINE[@]}" "${GFX[@]}" "$RT/bin/wine" 'C:\smoke\devices-i686.exe'
+step devices-x64 600 "${WINE[@]}" "${GFX[@]}" "$RT/lib/wine/aarch64-unix/wine" 'C:\smoke\devices-x86_64.exe'
+step devices-x86 600 "${WINE[@]}" "${GFX[@]}" "$RT/lib/wine/aarch64-unix/wine" 'C:\smoke\devices-i686.exe'
 
 env -i "${WINEENV[@]}" timeout 60 "$RT/bin/wineserver" -k || true
 exit $failed
