@@ -89,14 +89,32 @@ It does not download arbitrary individual Windows DLLs from DLL collection sites
 
 ## What has actually been verified here
 
-- Python and shell syntax; Java syntax parsing (not Java compilation).
-- Wine patch anchors against the exact downloaded source revision.
-- Workflow parsing and preservation of all original iOS/unrelated jobs.
-- Host compilation and execution of the shared-memory adapter regression test.
+CI builds every component and both APKs, runs the Kotlin unit tests, and
+checks that the app's native libraries are 16 KB page aligned.
 
-**Not run:** the full GitHub Actions build, Android Java/native compilation,
-Wine/FEX execution, Windows smoke programs, or a physical-device graphics test.
-This is an implementation candidate, not a claim of a completed working port.
+The `android_runtime_test` job then **runs** each APK's Windows runtime on a
+native arm64 runner with Android's own bionic libc and linker (Termux
+`aosp-libs`, Android 9), the way the app runs it: the runtime unpacked to the
+app's path, the prefix and environment `WineLaunch` creates, no
+`LD_LIBRARY_PATH`, programs started through `explorer /desktop=shell,...` like
+`WineActivity` starts games. See `runtime/android/tests/smoke/`.
+
+| Check | Default APK (Proton fork) | Madeira Wine APK (experimental) |
+|---|---|---|
+| wineboot (new 64-bit prefix) | passes | passes |
+| x64 program via FEX ARM64EC: threads, memory, exceptions, files, registry, child process, timers, sockets | passes | **fails**: x64 programs hang |
+| x86 program via FEX WoW64: same checks | passes | passes |
+| Vulkan (lavapipe CPU driver standing in for the GPU) | passes, x64 and x86 | x86 passes |
+| Direct3D 11 device through DXVK | passes, x64 and x86 | x86 passed once; not reliable |
+| Direct3D 12 device through VKD3D-Proton | passes, x64 and x86 | x86 passed once; not reliable |
+
+The Madeira Wine build also sometimes hangs creating the desktop
+(`NtUserCreateDesktopEx` waiting inside a display refresh). Treat it as
+experimental until those are understood.
+
+**Not covered:** the Java side (`wineandroid.drv`'s window, input and
+presentation run headless with Wine's null driver here), audio, a real GPU
+driver, and actual games. Those still need a physical-device run.
 
 ## Important unresolved integration risks
 
