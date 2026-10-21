@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Pocket Arcade contributors <noreply@pocketarcade.invalid>
+Date: Wed, 21 Oct 2026 23:30:00 +0000
+Subject: [PATCH] ntdll: 47-bit bound in arm64x_check_call on Android
+
+---
+diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
+index 2a1333f..ead45ad 100644
+--- a/dlls/ntdll/signal_arm64ec.c
++++ b/dlls/ntdll/signal_arm64ec.c
+@@ -4858,7 +4858,11 @@ static void __attribute__((naked)) arm64x_check_call(void)
+           * Not covered, deliberately, to keep the scope to the observed fault: a
+           * NULL or small-but-invalid target still reaches `ldr x16,[x11]` below and
+           * faults there, which is what Windows would also do. */
+-         "lsr x16, x11, #39\n\t"            /* ml975: beyond 39-bit VA / map coverage? */
++         /* Android: user space and the EcCodeBitMap cover 47 bits, and Wine maps
++          * ntdll and the other PE modules near 0x6fff00000000, far above iOS's
++          * 39-bit limit. With 39 here every call into ntdll took the x64 exit
++          * thunk and started the emulator before it was initialised. */
++         "lsr x16, x11, #47\n\t"            /* beyond user VA / map coverage? */
+          "cbnz x16, .Lexit\n\t"             /*        -> not EC code, exit thunk */
+          "ldr x16, [x18, #0x60]\n\t"        /* peb -- see above, intentionally x18 */
+          "lsr x17, x11, #18\n\t"            /* dest / page_size / 64 */

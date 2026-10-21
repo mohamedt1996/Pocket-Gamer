@@ -1,15 +1,15 @@
-From 60d5ecf66822c57e9612c8520583edda88157192 Mon Sep 17 00:00:00 2001
-From: port <p@p>
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Pocket Arcade contributors <noreply@pocketarcade.invalid>
 Date: Tue, 20 Oct 2026 12:36:48 +0000
-Subject: [PATCH] ntdll: Android address space, userfaultfd and W^X-safe image
- loading
+Subject: [PATCH] ntdll: Android userfaultfd and W^X-safe image loading
 
+The address space limits stay Wine's: virtual_init measures the host's
+(39-bit on most 4 KB-page kernels, 47-bit on 16 KB-page ones), while a fixed
+39-bit user limit on a larger host sent every unhinted allocation into an
+endless "reserve what is above the limit and retry" loop.
 ---
- dlls/ntdll/unix/virtual.c | 18 ++++++++++++++++--
- 1 file changed, 16 insertions(+), 2 deletions(-)
-
 diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
-index 781598f..2bbbe83 100644
+index 781598f..54ddd57 100644
 --- a/dlls/ntdll/unix/virtual.c
 +++ b/dlls/ntdll/unix/virtual.c
 @@ -76,7 +76,8 @@
@@ -22,21 +22,7 @@ index 781598f..2bbbe83 100644
  #define USE_UFFD_WRITEWATCH
  #endif
  #endif
-@@ -186,7 +187,12 @@ static void *address_space_start = (void *)0x110000; /* keep DOS area clear */
- #else
- static void *address_space_start = (void *)0x10000;
- #endif
--#ifdef _WIN64
-+#if defined(_WIN64) && defined(__ANDROID__)
-+/* Android arm64 kernels commonly give apps a 39-bit address space. */
-+static void *address_space_limit = (void *)0x7fffff0000;  /* top of the total available address space */
-+static void *user_space_limit    = (void *)0x7fffff0000;  /* top of the user address space */
-+static void *working_set_limit   = (void *)0x7fffff0000;  /* top of the current working set */
-+#elif defined(_WIN64)
- static void *address_space_limit = (void *)0x7fffffff0000;  /* top of the total available address space */
- static void *user_space_limit    = (void *)0x7fffffff0000;  /* top of the user address space */
- static void *working_set_limit   = (void *)0x7fffffff0000;  /* top of the current working set */
-@@ -3426,7 +3432,15 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
+@@ -3426,7 +3427,15 @@ static NTSTATUS virtual_map_image( HANDLE mapping, void **addr_ptr, SIZE_T *size
      status = map_image_view( &view, image_info, size, limit_low, limit_high, alloc_type );
      if (status) goto done;
  
