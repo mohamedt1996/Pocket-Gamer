@@ -33,6 +33,7 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
   local name=$1 limit=$2; shift 2
   local out="$LOGS/$name.out" log="$LOGS/$name.log" sum="$LOGS/$name.summary" start=$SECONDS
   echo "== $name: $*"
+  [ -n "${RESULT:-}" ] && rm -f "$RESULT"   # a program run twice must not pass on the old file
   "$@" > "$out" 2> "$log" &
   local pid=$! rc i
   for ((i = 0; i < limit; i++)); do
@@ -152,6 +153,9 @@ GFX=(WINEDLLOVERRIDES="mscoree,mshtml=d;d3d8,d3d9,d3d10core,d3d11,dxgi=n,b;d3d12
 # Plain Vulkan first (winevulkan + driver), then DXVK/VKD3D on top of it.
 RESULT="$SMOKE/vk-i686.txt" step vk-x86 90 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\vk-i686.exe'
 RESULT="$SMOKE/vk-x86_64.txt" step vk-x64 90 "${WINE[@]}" "${GFX[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,+vulkan" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\vk-x86_64.exe'
+# Regression check for the win32u Vulkan self-deadlock: started on its own, without the
+# desktop, the program loads the display driver from inside Vulkan initialisation.
+RESULT="$SMOKE/vk-x86_64.txt" step vk-x64-standalone 90 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\vk-x86_64.exe'
 RESULT="$SMOKE/devices-i686.txt" step devices-x86 150 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe'
 RESULT="$SMOKE/devices-x86_64.txt" step devices-x64 150 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe'
 
