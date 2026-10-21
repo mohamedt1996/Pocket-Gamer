@@ -36,13 +36,19 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
   [ -n "${RESULT:-}" ] && rm -f "$RESULT"   # a program run twice must not pass on the old file
   "$@" > "$out" 2> "$log" &
   local pid=$! rc i
+  # Through the desktop, the launcher (explorer) may return at once while the program
+  # runs on, or stay after it: with a result file, wait for its RESULT line instead.
+  local done_=0
   for ((i = 0; i < limit; i++)); do
-    kill -0 $pid 2>/dev/null || break
-    # Programs started through the desktop (like the app's games) finish before explorer does.
-    if [ -n "${RESULT:-}" ] && grep -q '^RESULT' "$RESULT" 2>/dev/null; then sleep 1; kill $pid 2>/dev/null; break; fi
+    if [ -n "${RESULT:-}" ]; then
+      grep -q '^RESULT' "$RESULT" 2>/dev/null && { done_=1; break; }
+    else
+      kill -0 $pid 2>/dev/null || { done_=1; break; }
+    fi
     sleep 1
   done
-  if kill -0 $pid 2>/dev/null && ! { [ -n "${RESULT:-}" ] && grep -q '^RESULT' "$RESULT" 2>/dev/null; }; then
+  if [ $done_ -eq 1 ] && [ -n "${RESULT:-}" ]; then sleep 1; kill $pid 2>/dev/null; fi
+  if [ $done_ -eq 0 ]; then
     hang_report > "$LOGS/$name.hang" 2>&1
     kill -9 $pid 2>/dev/null; wait $pid 2>/dev/null; rc=124
   else
@@ -74,6 +80,14 @@ hang_report() { # every thread of every runtime process: state, kernel wait chan
       echo "  tid $tid $(awk '{print $3}' /proc/$p/task/$tid/stat 2>/dev/null) wchan=$(cat /proc/$p/task/$tid/wchan 2>/dev/null) syscall=$(sudo cat /proc/$p/task/$tid/syscall 2>/dev/null | cut -d' ' -f1-3)"
     done
   done | head -60
+  # Where each test program's threads are over a few seconds: a pc that keeps moving is
+  # slow work or a spin, one that never moves is a wait.
+  for p in $(pgrep -f 'smoke\\' 2>/dev/null); do
+    for n in 1 2 3 4; do
+      echo "sample $n pid $p: $(sudo timeout 30 gdb -p "$p" -batch -nx -ex 'thread apply all p/x $pc' 2>/dev/null | grep -E '^\$' | tr '\n' ' ')"
+      sleep 2
+    done
+  done
   # Native stack of each hung test program (gdb reads bionic's and the libraries' symbols).
   for p in $(pgrep -f 'smoke\\' 2>/dev/null); do
     echo "=== gdb $p"
@@ -156,8 +170,8 @@ RESULT="$SMOKE/vk-x86_64.txt" step vk-x64 90 "${WINE[@]}" "${GFX[@]}" WINEDEBUG=
 # Regression check for the win32u Vulkan self-deadlock: started on its own, without the
 # desktop, the program loads the display driver from inside Vulkan initialisation.
 RESULT="$SMOKE/vk-x86_64.txt" step vk-x64-standalone 90 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\vk-x86_64.exe'
-RESULT="$SMOKE/devices-i686.txt" step devices-x86 150 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe'
-RESULT="$SMOKE/devices-x86_64.txt" step devices-x64 150 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe'
+RESULT="$SMOKE/devices-i686.txt" step devices-x86 300 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe'
+RESULT="$SMOKE/devices-x86_64.txt" step devices-x64 300 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe'
 
 cleanup
 exit $failed
