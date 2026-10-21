@@ -14,6 +14,7 @@
 # usage: run.sh APK TESTS_DIR LOG_DIR
 # Prerequisite: Android userspace at /system (see the CI job).
 set -uo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
 APK=$(realpath "$1"); TESTS=$(realpath "$2"); LOGS=$(realpath -m "$3")
 APP=/data/data/org.pocketarcade.madeira/files
 RT="$APP/madeira-runtime-v2"
@@ -70,8 +71,7 @@ hang_report() { # every thread of every runtime process: state, kernel wait chan
   # Native stack of each hung test program (gdb reads bionic's and the libraries' symbols).
   for p in $(pgrep -f 'smoke\\' 2>/dev/null); do
     echo "=== gdb $p"
-    sudo timeout 90 gdb -p "$p" -batch -nx -ex "set pagination off" -ex "thread apply all bt 25" 2>&1 \
-      | grep -E '^#|^Thread' | head -60
+    sudo timeout 150 python3 "$HERE/stack.py" "$p" 2>&1 | head -80
   done
 }
 cleanup() { # a failed or hung step must not leave Wine processes behind for the next one

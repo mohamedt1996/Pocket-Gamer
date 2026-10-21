@@ -49,6 +49,8 @@ for patch in "$HERE"/madeira/patches/*.patch; do
   git -C "$SRC" apply --whitespace=nowarn "$patch" || { echo "::error::$(basename "$patch") does not apply"; exit 1; }
 done
 python3 "$HERE/patch-wine.py" "$SRC" --madeira
+# Madeira's iOS investigation logging: ERR -> TRACE (silent unless asked for).
+python3 "$HERE/madeira/quiet-diagnostics.py" "$SRC"
 
 cd "$SRC"
 autoconf -f
