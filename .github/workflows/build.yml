@@ -1679,21 +1679,7 @@ jobs:
         name: ${{ matrix.artifact }}
         path: apk
     - name: Install Android userspace (bionic, Vulkan loader, lavapipe)
-      shell: bash
-      run: |
-        set -euo pipefail
-        sudo apt-get update -qq
-        sudo apt-get install -y -qq gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 binutils unzip
-        sudo mkdir -p /data/data && sudo chown -R "$USER" /data
-        python3 runtime/android/tests/smoke/termux-env.py /
-        TERMUX=/data/data/com.termux/files/usr
-        AOSP="$TERMUX/opt/aosp"
-        find "$AOSP" -maxdepth 2 | sort | head -60 > aosp.txt
-        echo "::notice title=aosp-libs layout::$(sed ':a;N;$!ba;s/\n/%0A/g' aosp.txt)"
-        sudo ln -sfn "$AOSP" /system
-        test -x /system/bin/linker64
-        # Android's Vulkan loader name, backed by the Khronos loader + lavapipe.
-        ln -sf "$TERMUX/lib/libvulkan.so" /system/lib64/libvulkan.so
+      run: bash runtime/android/tests/smoke/setup.sh logs/setup
     - name: Build test programs
       run: |
         mkdir -p tests-bin
