@@ -107,14 +107,28 @@ app's path, the prefix and environment `WineLaunch` creates, no
 | Vulkan (lavapipe CPU driver standing in for the GPU) | passes, x64 and x86 | x86 passes |
 | Direct3D 11 device through DXVK | passes, x64 and x86 | x86 passed once; not reliable |
 | Direct3D 12 device through VKD3D-Proton | passes, x64 and x86 | x86 passed once; not reliable |
+| Sound: WASAPI → DirectAudio → AAudio (a stand-in AAudio that measures what arrives) | tested, x64 and x86 | — |
 
-The Madeira Wine build also sometimes hangs creating the desktop
-(`NtUserCreateDesktopEx` waiting inside a display refresh). Treat it as
-experimental until those are understood.
+Why Madeira Wine's x64 path fails: Madeira's Wine runs its iOS ARM64EC design on
+Android too (its log shows "[iOS] early locale_init", a skipped ntdll re-patch and
+a first exception at a misaligned address). That design expects FEX's iOS mode
+and iOS's JIT memory pool. Building Madeira's own FEX fork (willfaust/FEX) for
+Android was tried: it compiles with small fallbacks, but x64 still hangs and x86
+gets worse, so the Madeira APK stays on upstream FEX. Making x64 work means
+porting that iOS design to Android in both forks. The Madeira Wine build also
+sometimes hangs creating the desktop (`NtUserCreateDesktopEx` waiting inside a
+display refresh). Treat it as experimental; the default APK covers everything
+above.
 
-**Not covered:** the Java side (`wineandroid.drv`'s window, input and
-presentation run headless with Wine's null driver here), audio, a real GPU
-driver, and actual games. Those still need a physical-device run.
+The `android_emulator_test` job runs the app itself (without the runtime) on
+Android 11 and 14 emulator images with ARM64 translation: install, start, first
+screen, 400 random taps/swipes/back presses, and a restart after Android kills
+the process, failing on any crash or ANR.
+
+**Not covered:** Wine's window, input and presentation on a real Android surface
+(`wineandroid.drv` needs the app's Java side, and Wine cannot run inside the
+emulator's ARM translation), a real GPU driver, a real speaker, and actual games.
+Those still need a physical-device run.
 
 ## Important unresolved integration risks
 

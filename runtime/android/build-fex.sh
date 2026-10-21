@@ -2,7 +2,6 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 # FEX_SOURCE: the sources.json entry; FEX_COMPONENT: the output component.
-# Madeira's Wine needs Madeira's own FEX fork (build-fex-madeira.sh).
 FEX_SOURCE="${FEX_SOURCE:-fex}"
 FEX_COMPONENT="${FEX_COMPONENT:-fex}"
 WORK="$ROOT/.android-work/$FEX_COMPONENT"
@@ -10,10 +9,6 @@ OUT="$ROOT/.android-out/$FEX_COMPONENT"
 : "${ANDROID_NDK_HOME:?}" "${LLVM_MINGW:?}"
 export PATH="$LLVM_MINGW/bin:$PATH"
 python3 "$ROOT/runtime/android/fetch.py" "$FEX_SOURCE" "$WORK"
-if [ "$FEX_COMPONENT" = fex-madeira ]; then
-  git -C "$WORK" checkout -q -- .
-  python3 "$ROOT/runtime/android/madeira/patch-fex.py" "$WORK"
-fi
 mkdir -p "$OUT/lib/wine/aarch64-windows" "$OUT/lib/wine/aarch64-unix" "$OUT/share/licenses/fex"
 for target in arm64ec aarch64; do
   cmake -S "$WORK" -B "$WORK/build-$target" -G Ninja \

@@ -1422,7 +1422,6 @@ jobs:
     # Experimental: Madeira's Wine (willfaust/wine) ported to Android. Separate
     # from android_components so it never blocks the shipped APK; see
     # runtime/android/madeira/README.md.
-    # Madeira's Wine and the FEX fork Madeira pins next to it.
     name: "Android source build \u2022 ${{ matrix.component }} (experimental)"
     runs-on: ubuntu-24.04
     timeout-minutes: 350
@@ -1430,7 +1429,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [wine-madeira, fex-madeira]
+        component: [wine-madeira]
     steps:
     - uses: actions/checkout@v4
     - name: Compute component source key
@@ -1622,8 +1621,8 @@ jobs:
         path: .android-out/wine-madeira
     - uses: actions/download-artifact@v4
       with:
-        name: Android-component-fex-madeira
-        path: .android-out/fex-madeira
+        name: Android-component-fex
+        path: .android-out/fex
     - uses: actions/download-artifact@v4
       with:
         name: Android-component-graphics
@@ -1643,7 +1642,7 @@ jobs:
     - name: Assemble and verify runtime bundle
       run: |
         sudo apt-get install -y -qq patchelf
-        python3 runtime/android/package-runtime.py --wine wine-madeira --fex fex-madeira
+        python3 runtime/android/package-runtime.py --wine wine-madeira
     - uses: gradle/actions/setup-gradle@v4
       with:
         gradle-version: '8.9'

@@ -30,9 +30,5 @@
   "madeira-dock": {
     "url": "https://github.com/willfaust/madeira-dock.git",
     "commit": "72558e416a390f3669457930f09a389e54f49556"
-  },
-  "madeira-fex": {
-    "url": "https://github.com/willfaust/FEX.git",
-    "commit": "f59cab95659e8add0c88f0c76ec1cf483c536dbf"
   }
 }

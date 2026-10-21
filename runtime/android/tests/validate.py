@@ -6,7 +6,7 @@ root=Path(__file__).resolve().parents[3]
 for p in (root/'runtime/android').glob('*.py'): py_compile.compile(str(p),doraise=True)
 for p in (root/'runtime/android').glob('*.sh'): subprocess.run(['bash','-n',str(p)],check=True)
 lock=json.loads((root/'runtime/android/sources.json').read_text())
-assert set(lock)=={'wine','fex','dxvk','vkd3d','madeira-wine','madeira','directaudio','madeira-dock','madeira-fex'}
+assert set(lock)=={'wine','fex','dxvk','vkd3d','madeira-wine','madeira','directaudio','madeira-dock'}
 # No GameNative-hosted sources or prebuilt filesystems.
 for p in (root/'runtime/android').glob('*'):
     if p.is_file(): assert 'github.com/GameNative' not in p.read_text(errors='ignore'), p
