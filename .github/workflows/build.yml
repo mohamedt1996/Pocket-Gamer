@@ -1664,6 +1664,45 @@ jobs:
           .android-out/bundle/share/licenses
         if-no-files-found: error
         include-hidden-files: true
+  android_emulator_test:
+    # The app itself (no Windows runtime) on real Android: x86_64 emulator images
+    # with ARM64 translation. Install, start, first screen, random use, process
+    # death. See runtime/android/tests/emulator/run.sh.
+    name: "Android app on emulator \u2022 API ${{ matrix.api }}"
+    needs: android_app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [30, 34]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      with:
+        name: Pocket-Arcade-app-without-runtime-debug
+        path: apk
+    - name: Enable KVM
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+    - name: Run on the emulator
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: ${{ matrix.api }}
+        arch: x86_64
+        target: google_apis
+        disable-animations: true
+        emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+        script: bash runtime/android/tests/emulator/run.sh "$(ls apk/*.apk | head -1)" emulator-logs
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: Android-emulator-test-api${{ matrix.api }}
+        path: emulator-logs
+        if-no-files-found: ignore
   android_runtime_test:
     # Runs each APK's Windows runtime on a native arm64 runner with Android's own
     # bionic libc and linker (Termux aosp-libs), as the app runs it on a phone:
@@ -1698,6 +1737,7 @@ jobs:
           $t-w64-mingw32-gcc -O2 -o tests-bin/cli-$t.exe runtime/android/tests/smoke/cli.c -lws2_32
           $t-w64-mingw32-gcc -O2 -o tests-bin/devices-$t.exe runtime/android/tests/smoke/devices.c -ld3d11 -ld3d12 -ldxgi
           $t-w64-mingw32-gcc -O2 -idirafter /usr/include -o tests-bin/vk-$t.exe runtime/android/tests/smoke/vk.c
+          $t-w64-mingw32-gcc -O2 -o tests-bin/audio-$t.exe runtime/android/tests/smoke/audio.c -lole32 -luuid -lm
         done
     - name: Unstripped Wine libraries for stack traces
       if: matrix.wine == 'madeira'

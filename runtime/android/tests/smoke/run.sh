@@ -129,7 +129,7 @@ if grep -q com.termux "$LOGS/runpath.log"; then annotate error "Termux RUNPATH s
 mkdir -p "$PREFIX/drive_c" "$PREFIX/dosdevices"
 ln -sfn ../drive_c "$PREFIX/dosdevices/c:"; ln -sfn / "$PREFIX/dosdevices/z:"
 printf 'WINE REGISTRY Version 2\n;; All keys relative to \\\\Machine\n\n#arch=win64\n\n[Software\\\\Microsoft\\\\Wow64\\\\amd64]\n@="libarm64ecfex.dll"\n\n[Software\\\\Microsoft\\\\Wow64\\\\x86]\n@="libwow64fex.dll"\n\n' > "$PREFIX/system.reg"
-printf 'WINE REGISTRY Version 2\n\n#arch=win64\n\n[Software\\\\Wine\\\\Drivers]\n"Audio"=""\n"Graphics"="null"\n\n' > "$PREFIX/user.reg"
+printf 'WINE REGISTRY Version 2\n\n#arch=win64\n\n[Software\\\\Wine\\\\Drivers]\n"Audio"="directaudio"\n"Graphics"="null"\n\n' > "$PREFIX/user.reg"
 # env -i: nothing from the host leaks in, LD_LIBRARY_PATH included.
 WINEENV=(
   HOME="$GAME" TMPDIR="$GAME/tmp" WINEPREFIX="$PREFIX"
@@ -138,6 +138,7 @@ WINEENV=(
   LC_ALL=C.UTF-8 LANG=C.UTF-8 WINEESYNC=0 WINEFSYNC=0 WINENTSYNC=0
   XDG_CACHE_HOME="$APP/wine-cache" ANDROID_ROOT=/system ANDROID_DATA=/data
   FONTCONFIG_FILE="$RT/etc/fonts/fonts.conf"
+  FAKE_AAUDIO_STATS="$LOGS/aaudio-stats.txt"
   VK_ICD_FILENAMES="$(ls "$TERMUX"/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
   WINEDLLOVERRIDES="mscoree,mshtml=d"
 )
@@ -172,6 +173,22 @@ cp "$RT"/graphics/dxvk/x64/*.dll "$RT"/graphics/vkd3d/x64/*.dll "$SYS32/"
 cp "$RT"/graphics/dxvk/x86/*.dll "$RT"/graphics/vkd3d/x86/*.dll "$WOW/"
 GFX=(WINEDLLOVERRIDES="mscoree,mshtml=d;d3d8,d3d9,d3d10core,d3d11,dxgi=n,b;d3d12,d3d12core=n,b"
      DXVK_LOG_LEVEL=info VKD3D_DEBUG=warn DXVK_LOG_PATH=none)
+# Sound: WASAPI -> mmdevapi -> winedirectaudio -> AAudio (the stand-in measures what arrives).
+audio_step() { # name exe
+  : > "$LOGS/aaudio-stats.txt"
+  RESULT="$SMOKE/$2.txt" step "$1" 120 "${WINE[@]}" "$LOADER" "${DESKTOP[@]}" "C:\\smoke\\$2.exe"
+  sleep 2
+  if ! awk '{for(i=1;i<=NF;i++){split($i,kv,"="); if(kv[1]=="frames")f+=kv[2]; if(kv[1]=="peak"&&kv[2]>p)p=kv[2]}} END{exit !(f>=24000 && p>=0.3)}' "$LOGS/aaudio-stats.txt"; then
+    echo "FAIL $1-reached-aaudio" >> "$LOGS/summary.txt"; failed=1
+    { echo "AAudio side:"; cat "$LOGS/aaudio-stats.txt"; } > "$LOGS/$1-aaudio.txt"
+    annotate error "$1: the tone did not reach AAudio" "$LOGS/$1-aaudio.txt"
+  else
+    echo "PASS $1-reached-aaudio ($(tr '\n' ' ' < "$LOGS/aaudio-stats.txt"))" >> "$LOGS/summary.txt"
+  fi
+}
+audio_step audio-x64 audio-x86_64
+audio_step audio-x86 audio-i686
+
 # Plain Vulkan first (winevulkan + driver), then DXVK/VKD3D on top of it.
 RESULT="$SMOKE/vk-i686.txt" step vk-x86 90 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\vk-i686.exe'
 RESULT="$SMOKE/vk-x86_64.txt" step vk-x64 90 "${WINE[@]}" "${GFX[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,+vulkan" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\vk-x86_64.exe'

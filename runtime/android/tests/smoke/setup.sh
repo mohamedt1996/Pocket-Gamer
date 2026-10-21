@@ -21,7 +21,7 @@ run() { # name command...
   fi
 }
 
-run apt bash -c 'sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 libvulkan-dev binutils unzip dpkg gdb'
+run apt bash -c 'sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 libvulkan-dev binutils unzip dpkg gdb clang lld'
 run data-dir bash -c 'sudo mkdir -p /data/data && sudo chown -R "$USER" /data'
 STAGE=$(mktemp -d)
 run termux-packages python3 "$HERE/termux-env.py" "$STAGE"
@@ -45,5 +45,9 @@ done
 vk=$(ls "$TERMUX"/lib/libvulkan.so* 2>/dev/null | head -1)
 if [ -n "$vk" ]; then ln -sf "$vk" "$lib64/libvulkan.so"; else echo "::warning title=setup::no Vulkan loader installed"; fi
 ls "$TERMUX"/share/vulkan/icd.d/ > "$LOGS/vulkan-icds.log" 2>&1 || true
+
+# A stand-in for Android's libaaudio.so (the runner has no audio), linked against bionic.
+run fake-aaudio clang --target=aarch64-linux-android28 -ffreestanding -nostdlib -shared -fPIC -O2 -fuse-ld=lld \
+  -Wl,-z,max-page-size=16384 -Wl,-soname,libaaudio.so -o "$lib64/libaaudio.so" "$HERE/fake_aaudio.c" -L"$lib64" -lc
 
 report notice "Android userspace ready ($system)" "$LOGS/system-libs.log"
