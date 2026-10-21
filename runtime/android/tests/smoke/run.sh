@@ -72,7 +72,10 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
       | grep -vE 'trace:seh|fixme:|_r_debug' | tail -n 60
   } > "$sum"
   cat "$sum"
-  if [ $ok -eq 0 ]; then annotate notice "$name passed" "$sum"; else annotate error "$name failed (exit $rc)" "$sum"; failed=1; cleanup; fi
+  # GitHub keeps only 10 annotations of a kind per step: details for failures only,
+  # and one summary line for the whole run at the end.
+  if [ $ok -eq 0 ]; then echo "PASS $name ($((SECONDS-start))s)" >> "$LOGS/summary.txt"
+  else echo "FAIL $name (exit $rc)" >> "$LOGS/summary.txt"; annotate error "$name failed (exit $rc)" "$sum"; failed=1; cleanup; fi
   RESULT=
   return $ok
 }
@@ -180,4 +183,6 @@ RESULT="$SMOKE/devices-i686.txt" step d3d12-x86 300 "${WINE[@]}" "${GFX[@]}" VKD
 RESULT="$SMOKE/devices-x86_64.txt" step d3d12-x64 300 "${WINE[@]}" "${GFX[@]}" VKD3D_DEBUG=info "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d12
 
 cleanup
+if [ $failed -eq 0 ]; then annotate notice "Runtime test passed ($(grep -c '^PASS' "$LOGS/summary.txt") steps)" "$LOGS/summary.txt"
+else annotate error "Runtime test failed" "$LOGS/summary.txt"; fi
 exit $failed
