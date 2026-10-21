@@ -130,6 +130,7 @@ for p in sorted(stage.rglob('*')):
     if not p.is_file() or p.read_bytes()[:4]!=b'\x7fELF': continue
     info=_subprocess.run(['readelf','-dW',str(p)],capture_output=True,text=True).stdout
     if 'RUNPATH' in info or 'RPATH' in info: continue
+    if '(NEEDED)' not in info: continue   # static (wine-preloader): nothing to look up
     needed=re.findall(r'\(NEEDED\).*\[(.*?)\]',info)
     rel=p.relative_to(stage).parts
     # Wine's unix modules also dlopen() bundled libraries by name (win32u ->
