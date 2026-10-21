@@ -35,8 +35,13 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
   echo "== $name: $*"
   "$@" > "$out" 2> "$log" &
   local pid=$! rc i
-  for ((i = 0; i < limit; i++)); do kill -0 $pid 2>/dev/null || break; sleep 1; done
-  if kill -0 $pid 2>/dev/null; then
+  for ((i = 0; i < limit; i++)); do
+    kill -0 $pid 2>/dev/null || break
+    # Programs started through the desktop (like the app's games) finish before explorer does.
+    if [ -n "${RESULT:-}" ] && grep -q '^RESULT' "$RESULT" 2>/dev/null; then sleep 1; kill $pid 2>/dev/null; break; fi
+    sleep 1
+  done
+  if kill -0 $pid 2>/dev/null && ! { [ -n "${RESULT:-}" ] && grep -q '^RESULT' "$RESULT" 2>/dev/null; }; then
     hang_report > "$LOGS/$name.hang" 2>&1
     kill -9 $pid 2>/dev/null; wait $pid 2>/dev/null; rc=124
   else
@@ -110,6 +115,7 @@ WINEENV=(
   LC_ALL=C.UTF-8 LANG=C.UTF-8 WINEESYNC=0 WINEFSYNC=0 WINENTSYNC=0
   XDG_CACHE_HOME="$APP/wine-cache" ANDROID_ROOT=/system ANDROID_DATA=/data
   FONTCONFIG_FILE="$RT/etc/fonts/fonts.conf"
+  VK_ICD_FILENAMES="$(ls "$TERMUX"/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
   WINEDLLOVERRIDES="mscoree,mshtml=d"
 )
 WINE=(env -i "${WINEENV[@]}")
@@ -131,22 +137,23 @@ cp "$TESTS"/*.exe "$PREFIX/drive_c/smoke/"
 cd "$PREFIX/drive_c/smoke"
 SMOKE="$PREFIX/drive_c/smoke"
 LOADER="$RT/lib/wine/aarch64-unix/wine"
-RESULT="$SMOKE/cli-x86_64.txt" step cli-x64 600 "${WINE[@]}" "$LOADER" 'C:\smoke\cli-x86_64.exe'
-RESULT="$SMOKE/cli-i686.txt" step cli-x86 600 "${WINE[@]}" "$LOADER" 'C:\smoke\cli-i686.exe'
+# WineActivity starts games as: explorer.exe /desktop=shell,,android <command line>
+DESKTOP=(explorer.exe /desktop=shell,,null)
+RESULT="$SMOKE/cli-x86_64.txt" step cli-x64 600 "${WINE[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\cli-x86_64.exe'
+RESULT="$SMOKE/cli-i686.txt" step cli-x86 600 "${WINE[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\cli-i686.exe'
 
 # Graphics devices: DXVK and VKD3D installed into the prefix as WineLaunch does,
 # with lavapipe behind Android's libvulkan.so name.
 SYS32="$PREFIX/drive_c/windows/system32"; WOW="$PREFIX/drive_c/windows/syswow64"
 cp "$RT"/graphics/dxvk/x64/*.dll "$RT"/graphics/vkd3d/x64/*.dll "$SYS32/"
 cp "$RT"/graphics/dxvk/x86/*.dll "$RT"/graphics/vkd3d/x86/*.dll "$WOW/"
-ICD=$(ls "$TERMUX"/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)
 GFX=(WINEDLLOVERRIDES="mscoree,mshtml=d;d3d8,d3d9,d3d10core,d3d11,dxgi=n,b;d3d12,d3d12core=n,b"
-     VK_ICD_FILENAMES="$ICD" DXVK_LOG_LEVEL=info VKD3D_DEBUG=warn DXVK_LOG_PATH=none)
+     DXVK_LOG_LEVEL=info VKD3D_DEBUG=warn DXVK_LOG_PATH=none)
 # Plain Vulkan first (winevulkan + driver), then DXVK/VKD3D on top of it.
-RESULT="$SMOKE/vk-i686.txt" step vk-x86 90 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\vk-i686.exe'
-RESULT="$SMOKE/vk-x86_64.txt" step vk-x64 90 "${WINE[@]}" "${GFX[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,+vulkan" "$LOADER" 'C:\smoke\vk-x86_64.exe'
-RESULT="$SMOKE/devices-i686.txt" step devices-x86 150 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\devices-i686.exe'
-RESULT="$SMOKE/devices-x86_64.txt" step devices-x64 150 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\devices-x86_64.exe'
+RESULT="$SMOKE/vk-i686.txt" step vk-x86 90 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\vk-i686.exe'
+RESULT="$SMOKE/vk-x86_64.txt" step vk-x64 90 "${WINE[@]}" "${GFX[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,+vulkan" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\vk-x86_64.exe'
+RESULT="$SMOKE/devices-i686.txt" step devices-x86 150 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe'
+RESULT="$SMOKE/devices-x86_64.txt" step devices-x64 150 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe'
 
 cleanup
 exit $failed
