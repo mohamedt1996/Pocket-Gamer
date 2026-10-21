@@ -113,6 +113,11 @@ rm -rf "$APP"; mkdir -p "$RT" "$GAME/tmp"
 unzip -q -o "$APK" assets/madeira-runtime.zip -d "$LOGS/apk"
 unzip -q -o "$LOGS/apk/assets/madeira-runtime.zip" -d "$RT"
 rm -rf "$LOGS/apk"
+# A component to test in place of the APK's own (e.g. another FEX build).
+if [ -n "${RUNTIME_OVERLAY:-}" ]; then
+  cp -a "$RUNTIME_OVERLAY/lib/." "$RT/lib/"
+  echo "overlaid $(find "$RUNTIME_OVERLAY/lib" -type f | wc -l) files from $RUNTIME_OVERLAY" >> "$LOGS/summary.txt"
+fi
 chmod -R u+x "$RT"
 python3 -c "import json,sys;m=json.load(open(sys.argv[1]));print('runtime',m['wine'],len(m['files']),'files')" "$RT/runtime.json"
 

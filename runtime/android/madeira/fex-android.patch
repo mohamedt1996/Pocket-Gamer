@@ -1,0 +1,174 @@
+Android host mode for Madeira's FEX fork (willfaust/FEX @ f59cab95).
+
+The fork is built for iOS (FEX_IOS_HOST). Its iOS-only machinery (TEB through
+TPIDRRO_EL0/TSD, the dual-mapped JIT pool and its PE-image aliases, the pool
+sweeper, Mach exception quirks) cannot work on Android, where Wine runs as on
+Linux: x18 is the TEB, anonymous memory can be RWX, exceptions arrive as
+signals. FEX_ANDROID_HOST keeps upstream FEX's Linux design for those and
+turns on the fork's host-independent parts that Madeira's Wine relies on:
+
+- Dispatcher: after SleepThread, resume the guest instead of hlt(0), which
+  under Wine's exception path falls into CallbackPtr (fork ml325).
+- WoW64: honour WOW64_CPURESERVED_FLAG_RESET_STATE, which is how Madeira's
+  wow64 asks for the 32-bit registers to be reloaded.
+- Phone-sized per-thread lookup cache (2 MB L1 cap, 32 MB block arena).
+
+and supplies non-iOS fallbacks where the fork uses iOS helpers outside their
+guards: identity PE-alias translation, no code-buffer sweep, zero VA band, no
+C-runtime time() in a JIT diagnostic, and no iOS-only exports in the .def.
+
+Built with -DFEX_ANDROID_HOST by runtime/android/build-fex.sh (fex-madeira).
+---
+diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
+index 72bd99e..55705d3 100644
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -2076,7 +2076,7 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
+         /* Wall-clock elapsed since first HOT sum — answers "is the game
+          * still alive at minute N?" Uses time(NULL) for second resolution. */
+         static volatile uint64_t s_start_secs = 0;
+-        uint64_t now = (uint64_t)time(NULL);
++        uint64_t now = 0; /* Android: no C runtime in this module; the log shows t=0s */
+         if (s_start_secs == 0) s_start_secs = now;
+         uint64_t elapsed = now - s_start_secs;
+         LogMan::Msg::EFmt("[HOT sum t={}s] 6fe6={} 6feb={} 28d20={} 28d41={} 28d46={} 687f0={} 68816={} "
+diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+index 21eadbe..59332cd 100644
+--- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
+@@ -612,7 +612,8 @@ void Dispatcher::EmitDispatcher() {
+     }
+ 
+     PauseReturnInstruction = GetCursorAddress<uint64_t>();
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
++    /* Android: the same Wine exception path as iOS (no Linux TYPE_PAUSE handler). */
+     /* iOS-Madeira ml325 -- THE #51 ROOT CAUSE.
+      *
+      * Upstream ends this block with hlt(0) and relies on the signal handler to notice
+diff --git a/FEXCore/Source/Interface/Core/LookupCache.h b/FEXCore/Source/Interface/Core/LookupCache.h
+index ffa2709..b96f959 100644
+--- a/FEXCore/Source/Interface/Core/LookupCache.h
++++ b/FEXCore/Source/Interface/Core/LookupCache.h
+@@ -522,7 +522,8 @@ private:
+   // Start with 8k entries in L1 to give 128KB of L1 cache to each thread.
+   // Max out at 1 million entries to give each thread 16MB of L1 cache maximum.
+   constexpr static size_t MIN_L1_ENTRIES = 8 * 1024;        // Must be a power of 2
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
++  /* Android: phones run games with dozens of threads; per-thread caches are smaller. */
+   /* iOS-Madeira ml363: cap the dynamic-L1 growth ceiling at 128K entries (2MB)
+    * instead of 1M (16MB). A hot thread's L1 inserts hash-scatter across the
+    * whole array, so a few thousand cached blocks dirty nearly every 16KB page
+@@ -539,7 +540,8 @@ private:
+   constexpr static size_t MAX_L1_ENTRIES = 1 * 1024 * 1024; // Must be a power of 2
+ #endif
+ 
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
++  /* Android: phones run games with dozens of threads; per-thread caches are smaller. */
+   /* iOS-Madeira: halve the per-thread block-backing arena — it's committed
+    * upfront on iOS (see LookupCache.cpp) and 128MB × ~19 threads was OOM-ing
+    * the process. 64MB still backs 1024 guest code pages per thread; on
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+index f79c770..e556940 100644
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -69,6 +69,13 @@ $end_info$
+ extern "C" char ios_va_log[];
+ extern "C" int ios_va_log_len;
+ 
++#ifndef FEX_IOS_HOST
++/* Android: no iOS JIT pool, so no pool-copy aliases (see runtime/android/madeira/patch-fex.py). */
++static inline uint64_t IosJitReverseTranslate(uint64_t Addr) { return Addr; }
++/* The iOS VA band is defined beside the iOS allocator; zero means "no band", upstream behaviour. */
++extern "C" { uintptr_t ios_fex_band_base = 0; uintptr_t ios_fex_band_end = 0; }
++#endif
++
+ #ifdef FEX_IOS_HOST
+ /* iOS JIT-pool alias resolution. Implemented in IosJitAlias.cpp (separate
+  * TU because ARM64EC class-method access to the static table directly from
+diff --git a/Source/Windows/ARM64EC/libarm64ecfex.def b/Source/Windows/ARM64EC/libarm64ecfex.def
+index 2f55c27..f728347 100644
+--- a/Source/Windows/ARM64EC/libarm64ecfex.def
++++ b/Source/Windows/ARM64EC/libarm64ecfex.def
+@@ -2,9 +2,6 @@ LIBRARY libarm64ecfex.dll
+ 
+ EXPORTS
+   BTCpu64FlushInstructionCache
+-  BTCpu64IosAddAliasMapping
+-  BTCpu64IosRipFromHostPC
+-  BTCpu64IosSetMonoBridge
+   BTCpu64IosReleaseThreadHolds
+   BTCpu64IsProcessorFeaturePresent
+   BTCpu64NotifyMemoryDirty
+@@ -31,15 +28,9 @@ EXPORTS
+   ; runs before the ARM64EC TEB exists and so cannot log for itself; ml751
+   ; flushed it from Module.cpp after [build-id], which is never reached when
+   ; the selector finds NO BAND -- exactly the failure that needs explaining.
+-  ios_va_log DATA
+-  ios_va_log_len DATA
+   ; ml797: the VA band, written by ntdll from arm64ec_process_init_dispatchers()
+   ; BEFORE the selector runs. The selector cannot read an environment for itself
+   ; -- it runs before the ARM64EC TEB and before ucrtbase's DllMain, where
+   ; getenv() recurses in _lock(17) and GetEnvironmentVariableA faults on the TEB.
+-  ios_fex_band_base DATA
+-  ios_fex_band_end DATA
+   ; ml1131: transition probe counters (Module.S), read by ntdll-unix's [xp-api] sampler.
+-  IosXpFex DATA
+   ; madeira-bcd: guest branch history v1
+-  IosGuestBranchTraceLayout DATA
+diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
+index 5c7dd86..c6cc417 100644
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -420,6 +420,13 @@ extern "C" void IosSweepRegisterThreadEx(FEXCore::Core::InternalThreadState* Thr
+                                          volatile uint8_t* MigratedPtr);
+ extern "C" void IosSweepUnregisterThread(FEXCore::Core::InternalThreadState* Thread);
+ extern "C" uint64_t IosCodeBufferSweepGate;
++#ifndef FEX_IOS_HOST
++/* Android: no iOS JIT-pool sweep (see runtime/android/madeira/patch-fex.py). */
++uint64_t IosCodeBufferSweepGate = 0;
++extern "C" void IosSweepRegisterThreadEx(FEXCore::Core::InternalThreadState*, volatile uint8_t*, volatile uint8_t*) {}
++extern "C" void IosSweepUnregisterThread(FEXCore::Core::InternalThreadState*) {}
++extern "C" { uintptr_t ios_fex_band_base = 0; uintptr_t ios_fex_band_end = 0; }
++#endif
+ 
+ static bool IosWowSweepEnabled() {
+   static std::atomic<int8_t> Cached {-1};
+@@ -716,7 +723,7 @@ bool HandleUnalignedAccess(TLS TLS, CONTEXT* Context) {
+   return Result.has_value();
+ }
+ 
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
+ /* MADEIRA: the CPU area is the 32-bit register state other threads see and set.
+  *
+  * Wine keeps a WOW64_CPURESERVED header ({ USHORT Flags; USHORT Machine; }) at
+@@ -772,7 +779,7 @@ void LockJITContext(TLS TLS) {
+   } while (!TLS.ControlWord().compare_exchange_weak(Expected, New, std::memory_order::relaxed));
+   std::atomic_signal_fence(std::memory_order::seq_cst);
+ 
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
+   // MADEIRA: a context set from outside (see ConsumeCpuAreaReset) counts as a dirty CPU area.
+   if (TLS.TEB == CurrentTEB() && ConsumeCpuAreaReset(TLS.TEB)) {
+     Expected |= ControlBits::WOW_CPU_AREA_DIRTY;
+@@ -870,7 +877,7 @@ public:
+       ReturnRSP += sizeof(StackLayout);
+ 
+       const auto TLS = GetTLS();
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
+       Context::FlushCpuAreaForExit(TLS); // MADEIRA: see ConsumeCpuAreaReset
+ #endif
+       Context::UnlockJITContext(TLS);
+@@ -890,7 +897,7 @@ public:
+       const uint64_t EntryRAX = Frame->State.gregs[FEXCore::X86State::REG_RAX];
+ 
+       const auto TLS = GetTLS();
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
+       Context::FlushCpuAreaForExit(TLS); // MADEIRA: see ConsumeCpuAreaReset
+ #endif
+       Context::UnlockJITContext(TLS);

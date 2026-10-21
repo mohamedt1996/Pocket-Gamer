@@ -9,12 +9,19 @@ OUT="$ROOT/.android-out/$FEX_COMPONENT"
 : "${ANDROID_NDK_HOME:?}" "${LLVM_MINGW:?}"
 export PATH="$LLVM_MINGW/bin:$PATH"
 python3 "$ROOT/runtime/android/fetch.py" "$FEX_SOURCE" "$WORK"
+HOST_FLAGS=()
+if [ "$FEX_COMPONENT" = fex-madeira ]; then
+  git -C "$WORK" checkout -q -- .
+  git -C "$WORK" apply "$ROOT/runtime/android/madeira/fex-android.patch"
+  HOST_FLAGS=(-DCMAKE_C_FLAGS=-DFEX_ANDROID_HOST -DCMAKE_CXX_FLAGS=-DFEX_ANDROID_HOST)
+fi
 mkdir -p "$OUT/lib/wine/aarch64-windows" "$OUT/lib/wine/aarch64-unix" "$OUT/share/licenses/fex"
 for target in arm64ec aarch64; do
   cmake -S "$WORK" -B "$WORK/build-$target" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$WORK/Data/CMake/toolchain_mingw.cmake" \
     -DMINGW_TRIPLE="$target-w64-mingw32" -DENABLE_LTO=OFF -DBUILD_TESTING=OFF \
-    -DENABLE_ASSERTIONS=OFF -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF -DTUNE_ARCH=generic -DTUNE_CPU=none -DRANGES_NATIVE=OFF
+    -DENABLE_ASSERTIONS=OFF -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF -DTUNE_ARCH=generic -DTUNE_CPU=none -DRANGES_NATIVE=OFF \
+    "${HOST_FLAGS[@]}"
   # Only the module Wine loads: the rest (libFEXCore.dll, tools) is never shipped.
   module=$([ "$target" = arm64ec ] && echo arm64ecfex || echo wow64fex)
   cmake --build "$WORK/build-$target" --parallel 2 --target "$module"

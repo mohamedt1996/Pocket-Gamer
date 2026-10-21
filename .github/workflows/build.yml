@@ -1429,7 +1429,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [wine-madeira]
+        component: [wine-madeira, fex-madeira]
     steps:
     - uses: actions/checkout@v4
     - name: Compute component source key
@@ -1621,8 +1621,8 @@ jobs:
         path: .android-out/wine-madeira
     - uses: actions/download-artifact@v4
       with:
-        name: Android-component-fex
-        path: .android-out/fex
+        name: Android-component-fex-madeira
+        path: .android-out/fex-madeira
     - uses: actions/download-artifact@v4
       with:
         name: Android-component-graphics
@@ -1642,7 +1642,7 @@ jobs:
     - name: Assemble and verify runtime bundle
       run: |
         sudo apt-get install -y -qq patchelf
-        python3 runtime/android/package-runtime.py --wine wine-madeira
+        python3 runtime/android/package-runtime.py --wine wine-madeira --fex fex-madeira
     - uses: gradle/actions/setup-gradle@v4
       with:
         gradle-version: '8.9'
@@ -1739,6 +1739,9 @@ jobs:
           artifact: Madeira-Android-runtime-lab-debug
         - wine: madeira
           artifact: MadeiraWine-Android-runtime-lab-debug
+        - wine: madeira-upstream-fex
+          artifact: MadeiraWine-Android-runtime-lab-debug
+          fex_overlay: Android-component-fex
     steps:
     - uses: actions/checkout@v4
     - uses: actions/download-artifact@v4
@@ -1756,8 +1759,14 @@ jobs:
           $t-w64-mingw32-gcc -O2 -idirafter /usr/include -o tests-bin/vk-$t.exe runtime/android/tests/smoke/vk.c
           $t-w64-mingw32-gcc -O2 -o tests-bin/audio-$t.exe runtime/android/tests/smoke/audio.c -lole32 -luuid -lm
         done
+    - name: FEX to put into the runtime instead of the APK's
+      if: matrix.fex_overlay
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ matrix.fex_overlay }}
+        path: fex-overlay
     - name: Unstripped Wine libraries for stack traces
-      if: matrix.wine == 'madeira'
+      if: startsWith(matrix.wine, 'madeira')
       continue-on-error: true
       uses: actions/download-artifact@v4
       with:
@@ -1767,6 +1776,7 @@ jobs:
       timeout-minutes: 30
       run: |
         [ -d wine-component/debug ] && export STACK_SYMBOLS="$PWD/wine-component/debug"
+        [ -d fex-overlay ] && export RUNTIME_OVERLAY="$PWD/fex-overlay"
         bash runtime/android/tests/smoke/run.sh apk/*.apk tests-bin logs
     - uses: actions/upload-artifact@v4
       if: always()

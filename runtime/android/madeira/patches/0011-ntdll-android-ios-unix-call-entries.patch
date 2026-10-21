@@ -1,4 +1,6 @@
-From: Pocket Arcade contributors
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Pocket Arcade contributors <noreply@pocketarcade.invalid>
+Date: Wed, 21 Oct 2026 20:00:00 +0000
 Subject: [PATCH] ntdll: Android entries for the iOS-only unix calls (ordinals 8-12)
 
 ---
