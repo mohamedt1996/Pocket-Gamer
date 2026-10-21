@@ -9,15 +9,17 @@ from pathlib import Path
 import hashlib,json,re,shutil,struct,sys,zipfile
 root=Path(__file__).resolve().parents[2]
 args=sys.argv[1:]
-wine='wine'
-if args[:1]==['--wine'] and len(args)==2: wine=args[1]
-elif args: raise SystemExit('usage: package-runtime.py [--wine wine|wine-madeira]')
+opts=dict(zip(args[::2],args[1::2]))
+if len(args)%2 or set(opts)-{'--wine','--fex'}: raise SystemExit('usage: package-runtime.py [--wine wine|wine-madeira] [--fex fex|fex-madeira]')
+wine=opts.get('--wine','wine'); fex=opts.get('--fex','fex')
 if wine not in ('wine','wine-madeira'): raise SystemExit('Unknown Wine component: '+wine)
+if fex not in ('fex','fex-madeira'): raise SystemExit('Unknown FEX component: '+fex)
 out=root/'.android-out'; stage=out/'bundle'
 if stage.exists(): shutil.rmtree(stage)
 stage.mkdir(parents=True)
-for name in (wine,'fex'):
-    shutil.copytree(out/name,stage,dirs_exist_ok=True,symlinks=False)
+for name in (wine,fex):
+    # debug/: unstripped copies for the runtime test's stack traces, not for the APK
+    shutil.copytree(out/name,stage,dirs_exist_ok=True,symlinks=False,ignore=shutil.ignore_patterns('debug'))
 shutil.copytree(out/'graphics',stage/'graphics',dirs_exist_ok=True)
 shutil.copytree(out/'addons',stage,dirs_exist_ok=True)
 required=['bin/wine','bin/wineserver','lib/wine/aarch64-unix/wine','lib/wine/aarch64-unix/ntdll.so',
@@ -56,6 +58,10 @@ for p in stage.rglob('*'):
             rel=p.relative_to(stage).as_posix()
             expected={0x14c} if '/x86/' in rel or '/i386-windows/' in rel else {0x8664} if '/x64/' in rel else {0xa641,0xa64e,0xaa64,0x8664}
             if machine not in expected:raise SystemExit('Wrong PE architecture: '+rel)
+
+# Android 9 loadability for GStreamer's GL library, and drop libraries Wine never reaches.
+import subprocess as _sp
+_sp.run([sys.executable, str(root/'runtime/android/slim-runtime.py'), str(stage)], check=True)
 
 # --- Android loader fixes and checks -----------------------------------------
 # Termux libraries (and the Proton fork's Wine) carry DT_RUNPATH
@@ -147,6 +153,9 @@ for good,bad in ((b'libvulkan.so',b'libvulkan.so.1'),(b'libEGL.so',b'libEGL.so.1
     if has_cstring(win32u,bad) or not has_cstring(win32u,good):
         raise SystemExit(f'win32u.so loads {bad.decode()} instead of Android\'s {good.decode()}: rebuild Wine with android-sonames.py')
 
+# Every library must resolve its symbols against what Android 9 (API 28) provides.
+_sp.run([sys.executable, str(root/'runtime/android/check-symbols.py'), str(stage)], check=True)
+
 # Fontconfig (used by win32u for system fonts) has Termux's config path compiled in.
 # WineLaunch points FONTCONFIG_FILE here instead: Android's fonts, cache in XDG_CACHE_HOME.
 (stage/'etc/fonts').mkdir(parents=True,exist_ok=True)
@@ -159,7 +168,7 @@ subprocess.run([sys.executable,str(root/'runtime/android/prepare-java.py'),
                 str(root/'android/app/src/main/java/org/winehq/wine')],check=True)
 files={p.relative_to(stage).as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
        for p in sorted(stage.rglob('*')) if p.is_file() and p.name!='runtime.json'}
-manifest={'schema':2,'abi':'arm64-v8a','kind':'wine-arm64ec-android','wine':wine,'files':files,
+manifest={'schema':2,'abi':'arm64-v8a','kind':'wine-arm64ec-android','wine':wine,'fex':fex,'files':files,
           'sources':json.loads((root/'runtime/android/sources.json').read_text()),
           'validation':'compiled-components-only; device execution not verified'}
 (stage/'runtime.json').write_text(json.dumps(manifest,indent=2)+'\n')

@@ -7,7 +7,7 @@ chain read from /proc/PID/mem; every address is matched to its library in
 
 usage: stack.py PID
 """
-import bisect, re, struct, subprocess, sys
+import bisect, os, re, struct, subprocess, sys
 
 pid = int(sys.argv[1])
 maps = []
@@ -17,7 +17,14 @@ for line in open(f'/proc/{pid}/maps'):
     maps.append((lo, hi, int(f[2], 16), f[5] if len(f) > 5 else ''))
 symcache = {}
 
+SYMBOLS = os.environ.get('STACK_SYMBOLS')
+
 def symbols(path):
+    # Prefer an unstripped copy of the same library (static functions get names).
+    if SYMBOLS:
+        alt = os.path.join(SYMBOLS, os.path.basename(path))
+        if os.path.isfile(alt):
+            path = alt
     if path not in symcache:
         syms = []
         for opt in (['-D'], []):

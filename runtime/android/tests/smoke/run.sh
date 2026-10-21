@@ -65,11 +65,12 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
   {
     echo "exit=$rc seconds=$((SECONDS-start))"
     if [ -n "${RESULT:-}" ]; then cat "$RESULT" 2>/dev/null || echo "(no result file)"; else cat "$out"; fi
-    [ $rc -eq 124 ] && { echo "--- hung: what each Wine thread waits on ---"; cat "$LOGS/$name.hang"; }
-    [ $done_ -eq 2 ] && { echo "--- program exited without a result: end of its log ---"; grep -v 'trace:\|fixme:\|^info:' "$log" | tail -n 40; }
     echo "--- log (errors) ---"
     grep -E 'err:|wine:|DXVK|DXGI|D3D11|vkd3d|Vulkan|vulkan|info:  |warn:  |err:  |Fontconfig|not found|failed|Failed' "$log" \
-      | grep -vE 'trace:seh|fixme:|_r_debug' | tail -n 60
+      | grep -vE 'trace:seh|fixme:|_r_debug' | tail -n 30
+    [ $done_ -eq 2 ] && { echo "--- program exited without a result: end of its log ---"; grep -v 'trace:\|fixme:\|^info:' "$log" | tail -n 40; }
+    # Last, since annotations keep only the end of a long message.
+    [ $rc -eq 124 ] && { echo "--- hung: busy threads and stacks ---"; grep -v 'anon_pipe_read\|ep_poll\|hrtimer_nanosleep\|skb_wait\|poll_schedule' "$LOGS/$name.hang"; }
   } > "$sum"
   cat "$sum"
   # GitHub keeps only 10 annotations of a kind per step: details for failures only,
@@ -98,7 +99,7 @@ hang_report() { # every thread of every runtime process: state, kernel wait chan
   # Native stack of each hung test program (gdb reads bionic's and the libraries' symbols).
   for p in $(pgrep -f 'smoke\\' 2>/dev/null); do
     echo "=== gdb $p"
-    sudo timeout 150 python3 "$HERE/stack.py" "$p" 2>&1 | head -60
+    sudo STACK_SYMBOLS="${STACK_SYMBOLS:-}" timeout 150 python3 "$HERE/stack.py" "$p" 2>&1 | head -60
   done
 }
 cleanup() { # a failed or hung step must not leave Wine processes behind for the next one

@@ -1413,25 +1413,30 @@ jobs:
     # Experimental: Madeira's Wine (willfaust/wine) ported to Android. Separate
     # from android_components so it never blocks the shipped APK; see
     # runtime/android/madeira/README.md.
-    name: "Android source build \u2022 wine-madeira (experimental)"
+    # Madeira's Wine and the FEX fork Madeira pins next to it.
+    name: "Android source build \u2022 ${{ matrix.component }} (experimental)"
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [wine-madeira, fex-madeira]
     steps:
     - uses: actions/checkout@v4
     - name: Compute component source key
       id: source_key
-      run: echo "value=$(python3 runtime/android/component-key.py wine-madeira)" >> "$GITHUB_OUTPUT"
+      run: echo "value=$(python3 runtime/android/component-key.py ${{ matrix.component }})" >> "$GITHUB_OUTPUT"
     - uses: actions/cache@v4
       id: component
       with:
-        path: .android-out/wine-madeira
-        key: android-native-v2-wine-madeira-${{ steps.source_key.outputs.value }}
+        path: .android-out/${{ matrix.component }}
+        key: android-native-v2-${{ matrix.component }}-${{ steps.source_key.outputs.value }}
     - name: Install native build tools
       if: steps.component.outputs.cache-hit != 'true'
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential git curl unzip flex bison gettext autoconf automake libtool pkg-config python3 libfreetype-dev
+        sudo apt-get install -y build-essential git curl unzip flex bison gettext autoconf automake libtool pkg-config python3 libfreetype-dev cmake ninja-build
     - uses: actions/cache@v4
       if: steps.component.outputs.cache-hit != 'true'
       with:
@@ -1439,29 +1444,29 @@ jobs:
           ~/toolchains
           ~/Android/Sdk/ndk/27.3.13750724
           ~/termuxfs/aarch64
-        key: android-tools-bylaws20250920-ndk27d-termux-official-v1-wine-madeira
+        key: android-tools-bylaws20250920-ndk27d-termux-official-v1-${{ matrix.component }}
     - name: Set up pinned toolchains
       if: steps.component.outputs.cache-hit != 'true'
-      run: bash runtime/android/setup-tools.sh wine-madeira
-    - name: Compile Madeira Wine from pinned source
+      run: bash runtime/android/setup-tools.sh ${{ matrix.component }}
+    - name: Compile from pinned source
       if: steps.component.outputs.cache-hit != 'true'
       shell: bash
       run: |
         set -euo pipefail
         mkdir -p .android-logs
-        bash runtime/android/build-wine-madeira.sh 2>&1 | tee .android-logs/wine-madeira.log
+        bash "runtime/android/build-${{ matrix.component }}.sh" 2>&1 | tee ".android-logs/${{ matrix.component }}.log"
     - name: Upload component
       uses: actions/upload-artifact@v4
       with:
-        name: Android-component-wine-madeira
-        path: .android-out/wine-madeira
+        name: Android-component-${{ matrix.component }}
+        path: .android-out/${{ matrix.component }}
         if-no-files-found: error
         include-hidden-files: true
     - name: Upload build logs
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: Android-logs-wine-madeira
+        name: Android-logs-${{ matrix.component }}
         path: .android-logs
         if-no-files-found: ignore
         include-hidden-files: true
@@ -1488,6 +1493,8 @@ jobs:
     - uses: gradle/actions/setup-gradle@v4
       with:
         gradle-version: '8.9'
+    - name: Validate runtime scripts and source locks
+      run: python3 runtime/android/tests/validate.py
     - name: Unit tests and APK
       working-directory: android
       run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
@@ -1532,10 +1539,6 @@ jobs:
       with:
         name: Android-component-addons
         path: .android-out/addons
-    - name: Assemble and verify runtime bundle
-      run: |
-        sudo apt-get install -y -qq patchelf
-        python3 runtime/android/package-runtime.py
     - name: Configure SDK and NDK
       shell: bash
       run: |
@@ -1544,6 +1547,10 @@ jobs:
         SDKMANAGER=$(find "$SDK/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)
         "$SDKMANAGER" --sdk_root="$SDK" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.3.13750724' 'cmake;3.22.1'
         echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+    - name: Assemble and verify runtime bundle
+      run: |
+        sudo apt-get install -y -qq patchelf
+        python3 runtime/android/package-runtime.py
     - uses: gradle/actions/setup-gradle@v4
       with:
         gradle-version: '8.9'
@@ -1597,8 +1604,8 @@ jobs:
         path: .android-out/wine-madeira
     - uses: actions/download-artifact@v4
       with:
-        name: Android-component-fex
-        path: .android-out/fex
+        name: Android-component-fex-madeira
+        path: .android-out/fex-madeira
     - uses: actions/download-artifact@v4
       with:
         name: Android-component-graphics
@@ -1607,10 +1614,6 @@ jobs:
       with:
         name: Android-component-addons
         path: .android-out/addons
-    - name: Assemble and verify runtime bundle
-      run: |
-        sudo apt-get install -y -qq patchelf
-        python3 runtime/android/package-runtime.py --wine wine-madeira
     - name: Configure SDK and NDK
       shell: bash
       run: |
@@ -1619,6 +1622,10 @@ jobs:
         SDKMANAGER=$(find "$SDK/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)
         "$SDKMANAGER" --sdk_root="$SDK" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.3.13750724' 'cmake;3.22.1'
         echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+    - name: Assemble and verify runtime bundle
+      run: |
+        sudo apt-get install -y -qq patchelf
+        python3 runtime/android/package-runtime.py --wine wine-madeira --fex fex-madeira
     - uses: gradle/actions/setup-gradle@v4
       with:
         gradle-version: '8.9'
@@ -1692,9 +1699,18 @@ jobs:
           $t-w64-mingw32-gcc -O2 -o tests-bin/devices-$t.exe runtime/android/tests/smoke/devices.c -ld3d11 -ld3d12 -ldxgi
           $t-w64-mingw32-gcc -O2 -idirafter /usr/include -o tests-bin/vk-$t.exe runtime/android/tests/smoke/vk.c
         done
+    - name: Unstripped Wine libraries for stack traces
+      if: matrix.wine == 'madeira'
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: Android-component-wine-madeira
+        path: wine-component
     - name: Run the runtime
       timeout-minutes: 30
-      run: bash runtime/android/tests/smoke/run.sh apk/*.apk tests-bin logs
+      run: |
+        [ -d wine-component/debug ] && export STACK_SYMBOLS="$PWD/wine-component/debug"
+        bash runtime/android/tests/smoke/run.sh apk/*.apk tests-bin logs
     - uses: actions/upload-artifact@v4
       if: always()
       with:

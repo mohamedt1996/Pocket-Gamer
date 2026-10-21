@@ -112,6 +112,10 @@ mkdir -p "$OUT/bin" "$OUT/lib" "$OUT/share"
 cp -a "$INSTALL/bin/." "$OUT/bin/"
 cp -a "$INSTALL/lib/wine" "$OUT/lib/"
 cp -a "$INSTALL/share/wine" "$OUT/share/"
+# Unstripped native libraries for symbolising stacks in the runtime test (debug/
+# is left out of the APK by package-runtime.py).
+mkdir -p "$OUT/debug"
+cp "$OUT"/lib/wine/aarch64-unix/*.so "$OUT/lib/wine/aarch64-unix/wine" "$OUT/bin/wineserver" "$OUT/debug/"
 find "$OUT/lib" "$OUT/bin" -type f \( -name '*.dll' -o -name '*.exe' -o -name '*.drv' -o -name '*.so' \) \
   -exec "$STRIP" --strip-all '{}' \; 2>/dev/null || true
 # The app starts Wine through bin/wine (WINELOADER), like build-wine.sh's output.
