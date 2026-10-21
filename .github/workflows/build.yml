@@ -1401,6 +1401,15 @@ jobs:
         path: .android-out/${{ matrix.component }}
         if-no-files-found: error
         include-hidden-files: true
+    - name: Report the build error
+      if: failure()
+      shell: bash
+      run: |
+        f=".android-logs/${{ matrix.component }}.log"
+        [ -f "$f" ] || exit 0
+        body=$(grep -n -iE 'error|fatal|undefined reference|No such file' "$f" | tail -n 25; echo ---; tail -n 25 "$f")
+        body=$(printf '%s' "$body" | cut -c1-300 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\r/%0D/g;s/\n/%0A/g')
+        echo "::error title=${{ matrix.component }} build failed::$body"
     - name: Upload build logs
       if: always()
       uses: actions/upload-artifact@v4
@@ -1462,6 +1471,15 @@ jobs:
         path: .android-out/${{ matrix.component }}
         if-no-files-found: error
         include-hidden-files: true
+    - name: Report the build error
+      if: failure()
+      shell: bash
+      run: |
+        f=".android-logs/${{ matrix.component }}.log"
+        [ -f "$f" ] || exit 0
+        body=$(grep -n -iE 'error|fatal|undefined reference|No such file' "$f" | tail -n 25; echo ---; tail -n 25 "$f")
+        body=$(printf '%s' "$body" | cut -c1-300 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\r/%0D/g;s/\n/%0A/g')
+        echo "::error title=${{ matrix.component }} build failed::$body"
     - name: Upload build logs
       if: always()
       uses: actions/upload-artifact@v4
