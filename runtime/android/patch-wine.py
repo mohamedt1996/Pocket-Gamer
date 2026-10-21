@@ -86,6 +86,8 @@ replace('dlls/ntdll/unix/loader.c',
 # instance is created on a later call instead of being latched as missing.
 replace('dlls/win32u/vulkan.c',
         'static void vulkan_init_once(void)\n{\n',
+        'struct gdi_dc_funcs;\n'
+        'extern const struct gdi_dc_funcs *get_display_driver(void); /* ntgdi_private.h */\n\n'
         'static pthread_t vulkan_init_thread;\n'
         'static volatile int vulkan_init_running;\n\n'
         '/* whether this thread is inside vulkan_init_once (see __wine_get_vulkan_driver) */\n'
@@ -105,9 +107,13 @@ replace('dlls/win32u/vulkan.c',
 replace('dlls/win32u/vulkan.c',
         '    pthread_once( &init_once, vulkan_init_once );\n'
         '    if (!vulkan_handle) return NULL;\n',
-        '    /* Reached again from inside vulkan_init_once on this thread (display\n'
-        '     * driver load -> display device refresh -> D3DKMT): waiting for the\n'
-        '     * once would wait for ourselves. */\n'
+        '    /* Load the display driver (and refresh the display devices) before\n'
+        '     * initialising Vulkan, as any process with a window already has. Done\n'
+        '     * from inside vulkan_init_once instead, the refresh registers the GPU\n'
+        '     * through D3DKMT, which needs this Vulkan driver: a wait on ourselves. */\n'
+        '    if (!vulkan_init_in_progress()) get_display_driver();\n'
+        '    /* Should anything else still lead back here during the initialisation\n'
+        '     * on this thread, answer "no Vulkan" rather than wait for ourselves. */\n'
         '    if (vulkan_init_in_progress()) return NULL;\n'
         '    pthread_once( &init_once, vulkan_init_once );\n'
         '    if (!vulkan_handle) return NULL;\n')
