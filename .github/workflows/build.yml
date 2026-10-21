@@ -1653,6 +1653,62 @@ jobs:
           .android-out/bundle/share/licenses
         if-no-files-found: error
         include-hidden-files: true
+  android_runtime_test:
+    # Runs each APK's Windows runtime on a native arm64 runner with Android's own
+    # bionic libc and linker (Termux aosp-libs), as the app runs it on a phone:
+    # wineboot, CPU/OS checks through FEX, and D3D11/D3D12 device creation on
+    # lavapipe. Headless (Wine's null graphics driver). See runtime/android/tests/smoke.
+    name: "Android runtime test \u2022 ${{ matrix.wine }}"
+    needs: [android_port, android_port_madeira]
+    if: always() && needs.android_port.result == 'success'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 75
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - wine: proton
+          artifact: Madeira-Android-runtime-lab-debug
+        - wine: madeira
+          artifact: MadeiraWine-Android-runtime-lab-debug
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      with:
+        name: ${{ matrix.artifact }}
+        path: apk
+    - name: Install Android userspace (bionic, Vulkan loader, lavapipe)
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 binutils unzip
+        sudo mkdir -p /data/data && sudo chown -R "$USER" /data
+        python3 runtime/android/tests/smoke/termux-env.py /
+        TERMUX=/data/data/com.termux/files/usr
+        AOSP="$TERMUX/opt/aosp"
+        find "$AOSP" -maxdepth 2 | sort | head -60 > aosp.txt
+        echo "::notice title=aosp-libs layout::$(sed ':a;N;$!ba;s/\n/%0A/g' aosp.txt)"
+        sudo ln -sfn "$AOSP" /system
+        test -x /system/bin/linker64
+        # Android's Vulkan loader name, backed by the Khronos loader + lavapipe.
+        ln -sf "$TERMUX/lib/libvulkan.so" /system/lib64/libvulkan.so
+    - name: Build test programs
+      run: |
+        mkdir -p tests-bin
+        for t in x86_64 i686; do
+          $t-w64-mingw32-gcc -O2 -o tests-bin/cli-$t.exe runtime/android/tests/smoke/cli.c -lws2_32
+          $t-w64-mingw32-gcc -O2 -o tests-bin/devices-$t.exe runtime/android/tests/smoke/devices.c -ld3d11 -ld3d12 -ldxgi
+        done
+    - name: Run the runtime
+      run: bash runtime/android/tests/smoke/run.sh apk/*.apk tests-bin logs
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: Android-runtime-test-${{ matrix.wine }}
+        path: logs
+        if-no-files-found: ignore
   publish_ios:
     name: Separate iOS release
     if: github.event_name == 'workflow_dispatch' && inputs.publish_releases == true
