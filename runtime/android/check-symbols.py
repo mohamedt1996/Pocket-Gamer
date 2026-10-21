@@ -84,6 +84,6 @@ if len(reports) > 40:
     print(f'... {len(reports) - 40} more')
 for f in failures:
     print('::error::Android 9: ' + f)
-print(f'Android 9 symbol check: {len(bundle)} libraries, {len(failures)} failures, {len(reports)} warnings')
+print(f'::notice title=Android 9 symbol check::{len(bundle)} libraries checked against API 28: {len(failures)} failures, {len(reports)} warnings')
 if failures:
     raise SystemExit(1)

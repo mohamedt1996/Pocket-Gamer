@@ -64,7 +64,18 @@ if gstgl.is_file():
                         str(here / 'stubs/glx_stub.c')], check=True)
         print('libGLX.so.0: GLX stub (no GLX on Android)')
 
-# 2. Remove what Wine cannot reach.
+# 2. Wine's X11 and Wayland display drivers: Android has neither (the app uses
+#    wineandroid.drv), and they pull in X11/Wayland libraries, one of them
+#    (libandroid-sysvshm) not 16 KB aligned.
+dropped = []
+for d in ('lib/wine/aarch64-unix', 'lib/wine/aarch64-windows', 'lib/wine/i386-windows'):
+    for name in ('winex11.so', 'winewayland.so', 'winex11.drv', 'winewayland.drv'):
+        p = stage / d / name
+        if p.is_file():
+            p.unlink(); dropped.append(f'{d.rsplit("/", 1)[-1]}/{name}')
+print('Removed display drivers Android cannot use:', ', '.join(dropped) or 'none')
+
+# 3. Remove what Wine cannot reach.
 files = {p.name: p for p in lib.iterdir() if p.is_file() and is_elf(p)}
 roots = [p for d in ('lib/wine', 'bin') for p in (stage / d).rglob('*') if p.is_file() and is_elf(p)]
 unix_modules = b''.join(p.read_bytes() for p in (stage / 'lib/wine/aarch64-unix').glob('*.so'))
