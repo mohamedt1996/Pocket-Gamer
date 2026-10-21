@@ -42,12 +42,15 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
   for ((i = 0; i < limit; i++)); do
     if [ -n "${RESULT:-}" ]; then
       grep -q '^RESULT' "$RESULT" 2>/dev/null && { done_=1; break; }
+      # The program is gone without a result: it crashed. No point waiting.
+      local exe; exe=$(basename "$RESULT" .txt)
+      if [ $i -gt 5 ] && ! kill -0 $pid 2>/dev/null && ! pgrep -f "smoke.$exe" > /dev/null; then done_=2; break; fi
     else
       kill -0 $pid 2>/dev/null || { done_=1; break; }
     fi
     sleep 1
   done
-  if [ $done_ -eq 1 ] && [ -n "${RESULT:-}" ]; then sleep 1; kill $pid 2>/dev/null; fi
+  if [ $done_ -ge 1 ] && [ -n "${RESULT:-}" ]; then sleep 1; kill $pid 2>/dev/null; fi
   if [ $done_ -eq 0 ]; then
     hang_report > "$LOGS/$name.hang" 2>&1
     kill -9 $pid 2>/dev/null; wait $pid 2>/dev/null; rc=124
@@ -63,6 +66,7 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
     echo "exit=$rc seconds=$((SECONDS-start))"
     if [ -n "${RESULT:-}" ]; then cat "$RESULT" 2>/dev/null || echo "(no result file)"; else cat "$out"; fi
     [ $rc -eq 124 ] && { echo "--- hung: what each Wine thread waits on ---"; cat "$LOGS/$name.hang"; }
+    [ $done_ -eq 2 ] && { echo "--- program exited without a result: end of its log ---"; grep -v 'trace:\|fixme:\|^info:' "$log" | tail -n 40; }
     echo "--- log (errors) ---"
     grep -E 'err:|wine:|DXVK|DXGI|D3D11|vkd3d|Vulkan|vulkan|info:  |warn:  |err:  |Fontconfig|not found|failed|Failed' "$log" \
       | grep -vE 'trace:seh|fixme:|_r_debug' | tail -n 60
@@ -91,7 +95,7 @@ hang_report() { # every thread of every runtime process: state, kernel wait chan
   # Native stack of each hung test program (gdb reads bionic's and the libraries' symbols).
   for p in $(pgrep -f 'smoke\\' 2>/dev/null); do
     echo "=== gdb $p"
-    sudo timeout 150 python3 "$HERE/stack.py" "$p" 2>&1 | head -80
+    sudo timeout 150 python3 "$HERE/stack.py" "$p" 2>&1 | head -60
   done
 }
 cleanup() { # a failed or hung step must not leave Wine processes behind for the next one
@@ -170,8 +174,10 @@ RESULT="$SMOKE/vk-x86_64.txt" step vk-x64 90 "${WINE[@]}" "${GFX[@]}" WINEDEBUG=
 # Regression check for the win32u Vulkan self-deadlock: started on its own, without the
 # desktop, the program loads the display driver from inside Vulkan initialisation.
 RESULT="$SMOKE/vk-x86_64.txt" step vk-x64-standalone 90 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\vk-x86_64.exe'
-RESULT="$SMOKE/devices-i686.txt" step devices-x86 300 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe'
-RESULT="$SMOKE/devices-x86_64.txt" step devices-x64 300 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe'
+RESULT="$SMOKE/devices-i686.txt" step d3d11-x86 120 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d11
+RESULT="$SMOKE/devices-x86_64.txt" step d3d11-x64 120 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d11
+RESULT="$SMOKE/devices-i686.txt" step d3d12-x86 300 "${WINE[@]}" "${GFX[@]}" VKD3D_DEBUG=info "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d12
+RESULT="$SMOKE/devices-x86_64.txt" step d3d12-x64 300 "${WINE[@]}" "${GFX[@]}" VKD3D_DEBUG=info "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d12
 
 cleanup
 exit $failed

@@ -13,11 +13,14 @@
 int main(int argc, char **argv)
 {
     int failures = 0;
+    int want11 = !(argc > 1 && !strcmp(argv[1], "d3d12"));
     int want12 = !(argc > 1 && !strcmp(argv[1], "d3d11"));
 
     ID3D11Device *dev11 = NULL;
     D3D_FEATURE_LEVEL level = 0;
-    HRESULT hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &dev11, &level, NULL);
+    HRESULT hr = S_OK;
+    if (want11) {
+    hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &dev11, &level, NULL);
     if (SUCCEEDED(hr)) {
         IDXGIDevice *dxgi = NULL;
         IDXGIAdapter *adapter = NULL;
@@ -33,9 +36,11 @@ int main(int argc, char **argv)
         out("FAIL d3d11 device: hr %08lx", hr);
         failures++;
     }
+    }
 
     if (want12) {
         ID3D12Device *dev12 = NULL;
+        out("INFO creating d3d12 device");
         hr = D3D12CreateDevice(NULL, D3D_FEATURE_LEVEL_11_0, &IID_ID3D12Device, (void **)&dev12);
         if (SUCCEEDED(hr)) { out("PASS d3d12 device"); ID3D12Device_Release(dev12); }
         else { out("FAIL d3d12 device: hr %08lx", hr); failures++; }
