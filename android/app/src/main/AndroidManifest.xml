@@ -20,5 +20,6 @@
     android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" android:screenOrientation="sensorLandscape"
     android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|navigation|uiMode|density|fontScale|locale|layoutDirection|colorMode|touchscreen"/>
   <service android:name=".DownloadService" android:exported="false"/>
+  <service android:name=".session.GameSessionService" android:process=":wine" android:exported="false"/>
  </application>
 </manifest>

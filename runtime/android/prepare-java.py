@@ -66,7 +66,9 @@ java=java[:start]+'''    private org.pocketarcade.madeira.session.SessionOverlay
 
     @Override protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
-        android.widget.Toast.makeText(this,"Stop the current game before starting another one.",android.widget.Toast.LENGTH_LONG).show();
+        // Returning from the session notification just brings the game back; only a new launch is refused.
+        if (intent.hasExtra(org.pocketarcade.madeira.session.LaunchSpec.EXTRA))
+            android.widget.Toast.makeText(this,"Stop the current game before starting another one.",android.widget.Toast.LENGTH_LONG).show();
     }
     @Override public void onBackPressed() {
         if (overlay != null) overlay.onBack();

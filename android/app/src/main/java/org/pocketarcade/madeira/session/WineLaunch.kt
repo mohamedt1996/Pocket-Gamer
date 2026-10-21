@@ -100,6 +100,7 @@ class WineLaunch private constructor(
             val env = environment(activity, runtime.root(), spec)
             NativeEnvironment.prepare(env["LD_LIBRARY_PATH"], spec.workingDir.ifEmpty { spec.home }, env["TMPDIR"])
             SessionState.markRunning(activity, spec)
+            GameSessionService.start(activity, spec.title)
             return WineLaunch(spec.command, env, File(runtime.root(), "lib/wine/aarch64-unix/ntdll.so").absolutePath, spec)
         }
 
