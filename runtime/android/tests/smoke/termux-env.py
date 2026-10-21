@@ -8,8 +8,9 @@ SHA-256 checks as termux-deps.py:
 - vulkan-loader-generic + mesa-vulkan-icd-swrast: a Vulkan loader and the
   lavapipe CPU driver, standing in for a phone's GPU driver.
 
-Everything is extracted at its real Termux path (/data/data/com.termux/...).
-usage: termux-env.py ROOT   (ROOT is usually /)
+Packages are extracted under ROOT with their real Termux paths
+(ROOT/data/data/com.termux/...); setup.sh copies them to /data.
+usage: termux-env.py ROOT
 """
 from pathlib import Path
 import importlib.util, subprocess, sys, tempfile

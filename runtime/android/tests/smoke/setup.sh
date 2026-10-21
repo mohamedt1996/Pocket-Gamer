@@ -23,7 +23,9 @@ run() { # name command...
 
 run apt bash -c 'sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 binutils unzip dpkg'
 run data-dir bash -c 'sudo mkdir -p /data/data && sudo chown -R "$USER" /data'
-run termux-packages python3 "$HERE/termux-env.py" /
+STAGE=$(mktemp -d)
+run termux-packages python3 "$HERE/termux-env.py" "$STAGE"
+run termux-install cp -a "$STAGE/data/." /data/
 cat "$LOGS/termux-packages.log"
 
 # aosp-libs keeps Android's /system tree under the Termux prefix.
