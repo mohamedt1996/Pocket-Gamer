@@ -21,7 +21,7 @@ run() { # name command...
   fi
 }
 
-run apt bash -c 'sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 libvulkan-dev binutils unzip dpkg'
+run apt bash -c 'sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 libvulkan-dev binutils unzip dpkg gdb'
 run data-dir bash -c 'sudo mkdir -p /data/data && sudo chown -R "$USER" /data'
 STAGE=$(mktemp -d)
 run termux-packages python3 "$HERE/termux-env.py" "$STAGE"

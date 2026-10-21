@@ -66,7 +66,13 @@ hang_report() { # every thread of every runtime process: state, kernel wait chan
     for tid in $(ls /proc/$p/task 2>/dev/null); do
       echo "  tid $tid $(awk '{print $3}' /proc/$p/task/$tid/stat 2>/dev/null) wchan=$(cat /proc/$p/task/$tid/wchan 2>/dev/null) syscall=$(sudo cat /proc/$p/task/$tid/syscall 2>/dev/null | cut -d' ' -f1-3)"
     done
-  done | head -120
+  done | head -60
+  # Native stack of each hung test program (gdb reads bionic's and the libraries' symbols).
+  for p in $(pgrep -f 'smoke\\' 2>/dev/null); do
+    echo "=== gdb $p"
+    sudo timeout 90 gdb -p "$p" -batch -nx -ex "set pagination off" -ex "thread apply all bt 25" 2>&1 \
+      | grep -E '^#|^Thread' | head -60
+  done
 }
 cleanup() { # a failed or hung step must not leave Wine processes behind for the next one
   [ -n "${WINE+x}" ] && timeout 30 "${WINE[@]}" "$RT/bin/wineserver" -k > /dev/null 2>&1
@@ -137,10 +143,10 @@ ICD=$(ls "$TERMUX"/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)
 GFX=(WINEDLLOVERRIDES="mscoree,mshtml=d;d3d8,d3d9,d3d10core,d3d11,dxgi=n,b;d3d12,d3d12core=n,b"
      VK_ICD_FILENAMES="$ICD" DXVK_LOG_LEVEL=info VKD3D_DEBUG=warn DXVK_LOG_PATH=none)
 # Plain Vulkan first (winevulkan + driver), then DXVK/VKD3D on top of it.
-RESULT="$SMOKE/vk-i686.txt" step vk-x86 180 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\vk-i686.exe'
-RESULT="$SMOKE/vk-x86_64.txt" step vk-x64 180 "${WINE[@]}" "${GFX[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,+vulkan" "$LOADER" 'C:\smoke\vk-x86_64.exe'
-RESULT="$SMOKE/devices-i686.txt" step devices-x86 300 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\devices-i686.exe'
-RESULT="$SMOKE/devices-x86_64.txt" step devices-x64 300 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\devices-x86_64.exe'
+RESULT="$SMOKE/vk-i686.txt" step vk-x86 90 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\vk-i686.exe'
+RESULT="$SMOKE/vk-x86_64.txt" step vk-x64 90 "${WINE[@]}" "${GFX[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,+vulkan" "$LOADER" 'C:\smoke\vk-x86_64.exe'
+RESULT="$SMOKE/devices-i686.txt" step devices-x86 150 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\devices-i686.exe'
+RESULT="$SMOKE/devices-x86_64.txt" step devices-x64 150 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\devices-x86_64.exe'
 
 cleanup
 exit $failed
