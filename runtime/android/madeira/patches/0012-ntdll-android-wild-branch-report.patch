@@ -5,10 +5,10 @@ Subject: [PATCH] ntdll: Name the caller of a branch to a null address (ARM64EC)
 
 ---
 diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
-index 2a1333f..9af8239 100644
+index 2a1333f..0c24006 100644
 --- a/dlls/ntdll/signal_arm64ec.c
 +++ b/dlls/ntdll/signal_arm64ec.c
-@@ -3555,10 +3555,59 @@ static void dispatch_syscall( ARM64_NT_CONTEXT *context )
+@@ -3555,10 +3555,62 @@ static void dispatch_syscall( ARM64_NT_CONTEXT *context )
  }
  
  
@@ -31,6 +31,9 @@ index 2a1333f..9af8239 100644
 +
 +    ERR( "wild branch to %p in thread %04lx, in simulation %u\n", (void *)(ULONG_PTR)ctx->Pc,
 +         GetCurrentThreadId(), get_arm64ec_cpu_area()->InSimulation );
++    ERR( "  dispatch_call_no_redirect=%p dispatch_fptr=%p dispatch_ret=%p BeginSimulation=%p\n",
++         __os_arm64x_dispatch_call_no_redirect, __os_arm64x_dispatch_fptr, __os_arm64x_dispatch_ret,
++         pBeginSimulation );
 +    android_describe( "lr", ctx->Lr );
 +    android_describe( "x16", ctx->X16 );
 +    android_describe( "x17", ctx->X17 );
