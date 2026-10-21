@@ -1666,7 +1666,7 @@ jobs:
     needs: [android_port, android_port_madeira]
     if: always() && needs.android_port.result == 'success'
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 75
+    timeout-minutes: 45
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -1693,6 +1693,7 @@ jobs:
           $t-w64-mingw32-gcc -O2 -idirafter /usr/include -o tests-bin/vk-$t.exe runtime/android/tests/smoke/vk.c
         done
     - name: Run the runtime
+      timeout-minutes: 30
       run: bash runtime/android/tests/smoke/run.sh apk/*.apk tests-bin logs
     - uses: actions/upload-artifact@v4
       if: always()

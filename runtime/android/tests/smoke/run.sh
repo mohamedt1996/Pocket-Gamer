@@ -32,8 +32,15 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
   local name=$1 limit=$2; shift 2
   local out="$LOGS/$name.out" log="$LOGS/$name.log" sum="$LOGS/$name.summary" start=$SECONDS
   echo "== $name: $*"
-  timeout --kill-after=20 "$limit" "$@" > "$out" 2> "$log"
-  local rc=$?
+  "$@" > "$out" 2> "$log" &
+  local pid=$! rc i
+  for ((i = 0; i < limit; i++)); do kill -0 $pid 2>/dev/null || break; sleep 1; done
+  if kill -0 $pid 2>/dev/null; then
+    hang_report > "$LOGS/$name.hang" 2>&1
+    kill -9 $pid 2>/dev/null; wait $pid 2>/dev/null; rc=124
+  else
+    wait $pid; rc=$?
+  fi
   # Windows test programs write <program>.txt beside themselves (out.h); judge by that file.
   local ok=$rc
   if [ -n "${RESULT:-}" ]; then
@@ -42,6 +49,7 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
   {
     echo "exit=$rc seconds=$((SECONDS-start))"
     if [ -n "${RESULT:-}" ]; then cat "$RESULT" 2>/dev/null || echo "(no result file)"; else cat "$out"; fi
+    [ $rc -eq 124 ] && { echo "--- hung: what each Wine thread waits on ---"; cat "$LOGS/$name.hang"; }
     echo "--- log (errors) ---"
     grep -E 'err:|wine:|DXVK|DXGI|D3D11|vkd3d|Vulkan|vulkan|info:  |warn:  |err:  |Fontconfig|not found|failed|Failed' "$log" \
       | grep -vE 'trace:seh|fixme:|_r_debug' | tail -n 60
@@ -50,6 +58,15 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
   if [ $ok -eq 0 ]; then annotate notice "$name passed" "$sum"; else annotate error "$name failed (exit $rc)" "$sum"; failed=1; cleanup; fi
   RESULT=
   return $ok
+}
+hang_report() { # every thread of every runtime process: state, kernel wait channel, syscall
+  local p tid
+  for p in $(pgrep -f "$RT|\.exe" 2>/dev/null); do
+    echo "pid $p: $(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-150)"
+    for tid in $(ls /proc/$p/task 2>/dev/null); do
+      echo "  tid $tid $(awk '{print $3}' /proc/$p/task/$tid/stat 2>/dev/null) wchan=$(cat /proc/$p/task/$tid/wchan 2>/dev/null) syscall=$(sudo cat /proc/$p/task/$tid/syscall 2>/dev/null | cut -d' ' -f1-3)"
+    done
+  done | head -120
 }
 cleanup() { # a failed or hung step must not leave Wine processes behind for the next one
   [ -n "${WINE+x}" ] && timeout 30 "${WINE[@]}" "$RT/bin/wineserver" -k > /dev/null 2>&1
@@ -96,6 +113,11 @@ step wineboot 900 "${WINE[@]}" "$RT/lib/wine/aarch64-unix/wine" wineboot --init
 env -i "${WINEENV[@]}" timeout 120 "$RT/bin/wineserver" -w || true
 grep -q '^#arch=win64' "$PREFIX/system.reg" || { echo "::error title=prefix::system.reg lost #arch=win64"; failed=1; }
 cp "$PREFIX/system.reg" "$PREFIX/user.reg" "$LOGS/" 2>/dev/null
+
+# The app's first Wine process is explorer's desktop, which games start next to;
+# keep one running here too (null driver instead of android).
+"${WINE[@]}" "$RT/lib/wine/aarch64-unix/wine" explorer.exe /desktop=shell,,null > "$LOGS/desktop.log" 2>&1 &
+sleep 5
 
 # 3. CPU and OS through FEX.
 mkdir -p "$PREFIX/drive_c/smoke"
