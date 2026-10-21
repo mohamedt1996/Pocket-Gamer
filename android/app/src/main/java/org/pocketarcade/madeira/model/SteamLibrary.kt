@@ -470,6 +470,14 @@ class SteamLibrary(
         SteamLog.event("[steam-depot] paused for a game session count=${resumeAfterSession.size}")
     }
 
+    /** At app start, a game launched by an earlier app process is still running: stay logged off until it ends. */
+    fun adoptRunningSession() {
+        if (inSession) return
+        inSession = true
+        scope.launch { session.suspendForGame() }
+        SteamLog.event("[steam-library] a game session is still running; staying logged off")
+    }
+
     /** The game session ended: the connection comes back, downloads continue, playtime and saves are refreshed. */
     fun sessionEnded(appID: Int?) {
         if (!inSession) return

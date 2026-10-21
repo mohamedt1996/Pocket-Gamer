@@ -92,7 +92,7 @@ public final class RuntimeManager {
   return dest;
  }
  private static void delete(File f) {
-  if(f.isDirectory()) {File[] children=f.listFiles();if(children!=null)for(File c:children)delete(c);}
+  if(f.isDirectory()&&!java.nio.file.Files.isSymbolicLink(f.toPath())) {File[] children=f.listFiles();if(children!=null)for(File c:children)delete(c);}
   if(f.exists()&&!f.delete())throw new IllegalStateException("Cannot delete "+f);
  }
 }

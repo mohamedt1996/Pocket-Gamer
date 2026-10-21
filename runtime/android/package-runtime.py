@@ -56,6 +56,73 @@ for p in stage.rglob('*'):
             rel=p.relative_to(stage).as_posix()
             expected={0x14c} if '/x86/' in rel or '/i386-windows/' in rel else {0x8664} if '/x64/' in rel else {0xa641,0xa64e,0xaa64,0x8664}
             if machine not in expected:raise SystemExit('Wrong PE architecture: '+rel)
+
+# --- Android loader fixes and checks -----------------------------------------
+# Termux libraries (and the Proton fork's Wine) carry DT_RUNPATH
+# /data/data/com.termux/files/usr/lib, which does not exist on a device. The
+# first Wine process is the app's own :wine process, where LD_LIBRARY_PATH is
+# not consulted for System.load()ed code, so Wine's dlopen of e.g.
+# libfreetype.so needs a RUNPATH that points into this bundle. The new path is
+# shorter than the old one, so it is written in place in .dynstr.
+def elf_dynamic(data):
+    phoff=struct.unpack_from('<Q',data,32)[0]; phsize,phcount=struct.unpack_from('<HH',data,54)
+    loads=[];dynamic=None;aligns=[]
+    for i in range(phcount):
+        o=phoff+i*phsize
+        ptype,_,offset,vaddr,_,filesz,_,align=struct.unpack_from('<IIQQQQQQ',data,o)
+        if ptype==1: loads.append((vaddr,offset,filesz)); aligns.append(align)
+        elif ptype==2: dynamic=(offset,filesz)
+    return loads,dynamic,aligns
+
+def vaddr_to_offset(loads,addr):
+    for vaddr,offset,filesz in loads:
+        if vaddr<=addr<vaddr+filesz: return offset+addr-vaddr
+    raise ValueError('address outside PT_LOAD')
+
+def rewrite_runpath(path,new):
+    data=bytearray(path.read_bytes())
+    loads,dynamic,_=elf_dynamic(data)
+    if not dynamic: return False
+    entries=[struct.unpack_from('<qQ',data,dynamic[0]+i) for i in range(0,dynamic[1],16)]
+    strtab=next((v for t,v in entries if t==5),None)
+    changed=False
+    for tag,value in entries:
+        if tag in (15,29) and strtab is not None:   # DT_RPATH, DT_RUNPATH
+            start=vaddr_to_offset(loads,strtab)+value
+            end=data.index(b'\0',start)
+            old=bytes(data[start:end])
+            if b'com.termux' not in old: continue
+            if len(new)>len(old): raise SystemExit(f'RUNPATH {old!r} too short to rewrite in {path}')
+            data[start:end]=new.encode()+b'\0'*(len(old)-len(new))
+            changed=True
+    if changed: path.write_bytes(bytes(data))
+    return changed
+
+rewritten=0; unaligned=[]
+for p in sorted(stage.rglob('*')):
+    if not p.is_file() or p.read_bytes()[:4]!=b'\x7fELF': continue
+    rel=p.relative_to(stage)
+    parts=rel.parts
+    if parts[:1]==('lib',) and len(parts)==2: runpath='$ORIGIN'                      # lib/*.so
+    elif parts[:3]==('lib','wine','aarch64-unix'): runpath='$ORIGIN/../..'           # lib/wine/aarch64-unix/*
+    elif parts[:1]==('bin',): runpath='$ORIGIN/../lib'
+    else: runpath='$ORIGIN'
+    if rewrite_runpath(p,runpath): rewritten+=1
+    _,_,aligns=elf_dynamic(p.read_bytes())
+    if aligns and min(aligns)<0x4000: unaligned.append(rel.as_posix())
+print(f'Rewrote Termux RUNPATH to bundle-relative paths in {rewritten} ELF files')
+# 16 KB page devices (Android 15+) cannot map 4 KB-aligned segments of these files.
+for rel in unaligned:
+    print(f'::warning::{rel} is not 16 KB page aligned; it will not load on 16 KB page devices')
+
+# Wine dlopen()s these by the name configure recorded (android-sonames.py).
+# Android has only the unversioned system libraries.
+def has_cstring(data,s): return (b'\0'+s+b'\0') in data
+win32u=(stage/'lib/wine/aarch64-unix/win32u.so').read_bytes()
+for good,bad in ((b'libvulkan.so',b'libvulkan.so.1'),(b'libEGL.so',b'libEGL.so.1')):
+    if has_cstring(win32u,bad) or not has_cstring(win32u,good):
+        raise SystemExit(f'win32u.so loads {bad.decode()} instead of Android\'s {good.decode()}: rebuild Wine with android-sonames.py')
+
 # Re-use the upstream UI matched to this Wine build; alter only startup/settings.
 import subprocess
 subprocess.run([sys.executable,str(root/'runtime/android/prepare-java.py'),

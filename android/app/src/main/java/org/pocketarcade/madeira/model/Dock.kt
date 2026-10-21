@@ -53,6 +53,13 @@ class DockModel(
     /** Built into this APK (the runtime's addons/dock). */
     fun bundled(runtimeRoot: File) = File(runtimeRoot, "addons/dock/dockhost.exe").isFile
 
+    /**
+     * Whether this build can start Madeira Dock. A runtime packaged in the APK always carries
+     * dockhost.exe (package-runtime.py requires it), but it is only unpacked at the first game
+     * start, so the unpacked file alone would say "missing" on a fresh install.
+     */
+    fun hostAvailable(runtime: org.pocketarcade.madeira.PortRuntime) = runtime.bundled() || bundled(runtime.root())
+
     fun refresh() { if (_components.value !is Components.Downloading) _components.value = if (prefix.clientInstalled) Components.Ready else Components.Missing }
 
     private fun sha256(f: File): String {
@@ -123,7 +130,7 @@ class DockModel(
     /** Removes Valve's client files (not the games, nor the prefix). */
     suspend fun removeComponents() = withContext(Dispatchers.IO) {
         val root = prefix.clientRoot
-        root.listFiles()?.forEach { if (it.name != "steamapps") it.deleteRecursively() }
+        root.listFiles()?.forEach { if (it.name != "steamapps") org.pocketarcade.madeira.platform.FileTrees.delete(it) }
         _components.value = Components.Missing
     }
 

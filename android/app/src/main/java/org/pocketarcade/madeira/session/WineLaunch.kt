@@ -135,6 +135,47 @@ class WineLaunch private constructor(
             symlink(File(dos, "z:"), "/")
         }
 
+        /**
+         * The registry a new prefix starts from, written before Wine's first start.
+         *
+         * system.reg must say `#arch=win64`: wineserver treats an existing system.reg without an
+         * arch line as a 32-bit prefix, and a 64-bit Wine then refuses to start in it.
+         * The Wine driver choice is read from HKCU (user.reg), not HKLM.
+         */
+        @JvmStatic
+        fun seedRegistry(prefix: File) {
+            prefix.mkdirs()
+            val system = File(prefix, "system.reg")
+            if (!system.exists()) {
+                system.writeText(REGISTRY_HEADER + ";; All keys relative to \\\\Machine\n\n#arch=win64\n\n" +
+                    "[Software\\\\Microsoft\\\\Wow64\\\\amd64]\n@=\"libarm64ecfex.dll\"\n\n" +
+                    "[Software\\\\Microsoft\\\\Wow64\\\\x86]\n@=\"libwow64fex.dll\"\n\n")
+            } else {
+                // Prefixes seeded by earlier versions lack the arch line; Wine always writes one itself.
+                val text = system.readText()
+                if (!text.lineSequence().any { it.startsWith("#arch=") } && text.startsWith(REGISTRY_HEADER)) {
+                    system.writeText(REGISTRY_HEADER + "\n#arch=win64\n" + text.removePrefix(REGISTRY_HEADER))
+                }
+            }
+            val user = File(prefix, "user.reg")
+            if (!user.exists()) {
+                user.writeText(REGISTRY_HEADER + "\n#arch=win64\n\n" + DRIVERS_KEY)
+            } else if (!user.readText().contains("[Software\\\\Wine\\\\Drivers]")) {
+                user.appendText("\n" + DRIVERS_KEY)
+            }
+        }
+
+        private const val REGISTRY_HEADER = "WINE REGISTRY Version 2\n"
+        private const val DRIVERS_KEY = "[Software\\\\Wine\\\\Drivers]\n\"Audio\"=\"directaudio\"\n\"Graphics\"=\"android\"\n\n"
+
+        /** Just enough environment for `wineserver -k` to find the prefix's server. */
+        fun serverEnvironment(context: Context, root: File, spec: LaunchSpec): HashMap<String, String> = hashMapOf(
+            "HOME" to spec.home,
+            "TMPDIR" to File(spec.home, "tmp").absolutePath,
+            "WINEPREFIX" to File(spec.home, "prefix").absolutePath,
+            "LD_LIBRARY_PATH" to File(root, "lib").absolutePath + ":" + File(root, "lib/wine/aarch64-unix").absolutePath + ":" + context.applicationInfo.nativeLibraryDir,
+        )
+
         private fun copyDlls(source: File, dest: File, names: Map<String, String>? = null) {
             dest.mkdirs()
             val files = source.listFiles { _, n -> n.endsWith(".dll") } ?: return
@@ -153,11 +194,7 @@ class WineLaunch private constructor(
             val tmp = File(home, "tmp")
             prefix.mkdirs(); tmp.mkdirs()
             prepareDrives(prefix)
-            val registry = File(prefix, "system.reg")
-            if (!registry.exists()) {
-                registry.writeText("WINE REGISTRY Version 2\n\n[Software\\\\Microsoft\\\\Wow64\\\\amd64]\n@=\"libarm64ecfex.dll\"\n\n" +
-                    "[Software\\\\Microsoft\\\\Wow64\\\\x86]\n@=\"libwow64fex.dll\"\n\n[Software\\\\Wine\\\\Drivers]\n\"Graphics\"=\"android\"\n\"Audio\"=\"directaudio\"\n")
-            }
+            seedRegistry(prefix)
             val system32 = File(prefix, "drive_c/windows/system32")
             val syswow64 = File(prefix, "drive_c/windows/syswow64")
             val env = HashMap<String, String>()
@@ -236,11 +273,25 @@ object SessionState {
         try { file(context).writeText(JSONObject().apply { put("steamAppID", spec.steamAppID); put("title", spec.title); put("state", "running"); put("pid", android.os.Process.myPid()); put("at", System.currentTimeMillis()) }.toString()) } catch (_: Exception) {}
     }
 
-    class Info(val steamAppID: Int, val title: String, val pid: Int, val at: Long)
+    /** Written by the :wine process just before it ends itself (stop, or a failed start). */
+    @JvmStatic
+    fun markEnded(context: Context) {
+        try {
+            val f = file(context)
+            if (!f.isFile) return
+            val o = JSONObject(f.readText())
+            o.put("state", "ended"); o.put("at", System.currentTimeMillis())
+            f.writeText(o.toString())
+        } catch (_: Exception) {}
+    }
+
+    class Info(val steamAppID: Int, val title: String, val pid: Int, val at: Long, val ended: Boolean)
 
     fun current(context: Context): Info? = try {
         val f = file(context)
-        if (!f.isFile) null else JSONObject(f.readText()).let { Info(it.optInt("steamAppID"), it.optString("title"), it.optInt("pid"), it.optLong("at")) }
+        if (!f.isFile) null else JSONObject(f.readText()).let {
+            Info(it.optInt("steamAppID"), it.optString("title"), it.optInt("pid"), it.optLong("at"), it.optString("state") == "ended")
+        }
     } catch (_: Exception) { null }
 
     fun clear(context: Context) { file(context).delete() }
@@ -250,5 +301,11 @@ object SessionState {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
         val name = context.packageName + ":wine"
         return am.runningAppProcesses?.any { it.processName == name } == true
+    }
+
+    /** Whether a game session is still going: recorded, not marked ended, and its process alive. */
+    fun sessionRunning(context: Context): Boolean {
+        val info = current(context) ?: return wineProcessRunning(context)
+        return !info.ended && wineProcessRunning(context)
     }
 }

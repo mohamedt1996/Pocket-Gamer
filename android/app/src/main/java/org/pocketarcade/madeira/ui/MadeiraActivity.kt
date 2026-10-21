@@ -65,9 +65,12 @@ class MadeiraActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        // The app process can be killed while a game runs in :wine. Coming back, Steam must stay
+        // logged off: Valve's client in the game session is using the account.
+        if (SessionState.sessionRunning(this)) graph.library.adoptRunningSession()
         graph.library.start()
         lifecycleScope.launch { graph.localGames.refresh() }
-        if (!SessionState.wineProcessRunning(this)) graph.dock.cleanup()
+        if (!SessionState.sessionRunning(this)) graph.dock.cleanup()
         setContent {
             val theme by graph.settings.theme.collectAsState()
             val metal by graph.settings.liquidMetal.collectAsState()
@@ -80,12 +83,12 @@ class MadeiraActivity : ComponentActivity() {
         super.onResume()
         // A game session that ended while the app was away: reopen Steam, sync saves, refresh playtime.
         val info = SessionState.current(this)
-        if (info != null && !SessionState.wineProcessRunning(this)) {
+        if (info != null && !SessionState.sessionRunning(this)) {
             SessionState.clear(this)
             graph.dock.cleanup()
             graph.library.sessionEnded(info.steamAppID.takeIf { it != 0 })
             lifecycleScope.launch { graph.localGames.refresh() }
-        } else if (info == null && graph.library.sessionActive && !SessionState.wineProcessRunning(this)) {
+        } else if (info == null && graph.library.sessionActive && !SessionState.sessionRunning(this)) {
             graph.library.sessionEnded(null)
         }
         graph.dock.refresh()

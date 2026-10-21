@@ -407,7 +407,7 @@ fun DockScreen(graph: AppGraph, nav: Navigator) {
     val colors = Madeira.colors
     val components by graph.dock.components.collectAsState()
     var confirmRemove by remember { mutableStateOf(false) }
-    val hostBundled = remember { graph.dock.bundled(graph.runtime.root()) || !graph.runtime.bundled() }
+    val hostBundled = remember { graph.dock.hostAvailable(graph.runtime) }
     PageFrame("Madeira Dock", { nav.pop() }) {
         Paragraph("Madeira Dock starts Steam games through Valve's Steam client, signed in with your account, without showing Steam's window. " +
             "Games get Steam's licence check, DRM, achievements and Steamworks as they would on a PC.")

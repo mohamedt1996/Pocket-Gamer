@@ -78,7 +78,7 @@ public class MainActivity extends Activity {
  private void chooseExecutable(){withGame(id->{ArrayList<File> files=new ArrayList<>();collectExecutables(store.directory(id),files);String[] names=new String[files.size()];for(int i=0;i<files.size();i++)names[i]=files.get(i).getAbsolutePath().substring(store.directory(id).getAbsolutePath().length()+1);
   new AlertDialog.Builder(this).setTitle("Game executable").setItems(names,(d,index)->{try{JSONObject s=store.settings(id);s.put("exe",files.get(index).getAbsolutePath());store.save(id,s);report.setText("Selected "+names[index]);}catch(Exception e){report.setText(e.toString());}}).show();
  });}
- private void collectExecutables(File dir,ArrayList<File> out){File[] children=dir.listFiles();if(children==null)return;for(File f:children){if(f.isDirectory())collectExecutables(f,out);else if(f.getName().toLowerCase(Locale.ROOT).endsWith(".exe"))out.add(f);}}
+ private void collectExecutables(File dir,ArrayList<File> out){File[] children=dir.listFiles();if(children==null)return;for(File f:children){if(java.nio.file.Files.isSymbolicLink(f.toPath()))continue;if(f.isDirectory())collectExecutables(f,out);else if(f.getName().toLowerCase(Locale.ROOT).endsWith(".exe"))out.add(f);}}
  private void dependencies(){withGame(id->new AlertDialog.Builder(this).setTitle("Install into this game's prefix")
   .setItems(new String[]{"Visual C++ x64 (Microsoft)","Visual C++ x86 (Microsoft)","Import AIR / .NET / other EXE or MSI","Download installer from HTTPS URL"},(d,index)->{
    dependencyGame=id;

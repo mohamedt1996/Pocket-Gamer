@@ -67,7 +67,7 @@ export CC="$TOOLCHAIN/$TARGET-clang" CXX="$TOOLCHAIN/$TARGET-clang++"
 export AR="$TOOLCHAIN/llvm-ar" RANLIB="$TOOLCHAIN/llvm-ranlib" STRIP="$TOOLCHAIN/llvm-strip"
 export PKG_CONFIG_LIBDIR="$DEPS/lib/pkgconfig:$DEPS/share/pkgconfig"
 export CPPFLAGS="-I$DEPS/include"
-export CFLAGS="-g0 -O2 -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES -Wno-declaration-after-statement"
+export CFLAGS="-g0 -O2 -Wno-declaration-after-statement"
 export CXXFLAGS="$CFLAGS" CROSSCFLAGS="-g0 -O2"
 export LDFLAGS="-L$DEPS/lib -Wl,-z,max-page-size=16384"
 export FREETYPE_CFLAGS="-I$DEPS/include/freetype2"
@@ -90,6 +90,9 @@ export FFMPEG_CFLAGS="-I$DEPS/include" FFMPEG_LIBS="-L$DEPS/lib -lavutil -lavcod
   --without-gssapi --without-krb5 --without-netapi --without-opencl --without-pcap \
   --without-pcsclite --without-sane --without-udev --without-unwind --without-usb \
   --without-v4l2 --without-gettext --with-gettextpo=no --without-inotify
+
+# Android's system Vulkan/EGL/GLES, not the Termux sysroot's versioned names.
+python3 "$HERE/android-sonames.py" "$SRC"
 
 # Configure succeeding without these would ship a runtime that cannot draw or play sound.
 disabled=" $(sed -n 's/^DISABLED_SUBDIRS *= *//p' Makefile) "

@@ -115,22 +115,50 @@ object AppLog {
 
 /** Keeps downloads going while the app is in the background, with their progress in a notification. */
 class DownloadService : Service() {
+    // A foreground service does not keep the CPU or Wi-Fi awake: without these, multi-GB
+    // downloads stall once the screen turns off.
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            wakeLock = pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "PocketArcade:download").apply { setReferenceCounted(false); acquire() }
+            @Suppress("DEPRECATION")
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+            @Suppress("DEPRECATION")
+            wifiLock = wm.createWifiLock(android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "PocketArcade:download").apply { setReferenceCounted(false); acquire() }
+        } catch (e: Exception) { Log.w("steam", "download locks unavailable", e) }
+    }
+
+    override fun onDestroy() {
+        try { wakeLock?.release() } catch (_: Exception) {}
+        try { wifiLock?.release() } catch (_: Exception) {}
+        super.onDestroy()
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val title = intent?.getStringExtra("title") ?: "Steam download"
         val percent = intent?.getIntExtra("percent", -1) ?: -1
         val text = intent?.getStringExtra("text") ?: ""
-        if (intent?.getBooleanExtra("stop", false) == true) { stopForeground(true); stopSelf(); return START_NOT_STICKY }
+        // Always enter the foreground first: a startForegroundService() for the next download may
+        // already be pending, and Android crashes the app if the service ends before it is answered.
         startForeground(NOTIFICATION, notification(this, title, text, percent))
+        if (intent?.getBooleanExtra("stop", false) == true) {
+            // Stops only if no newer start arrived after this one (the next queued download).
+            if (stopSelfResult(startId)) stopForeground(true)
+        }
         return START_NOT_STICKY
     }
 
     companion object {
         private const val CHANNEL = "downloads"
         private const val NOTIFICATION = 7
-        private var lastPercent = -2
-        private var running = false
+        @Volatile private var lastPercent = -2
+        @Volatile private var running = false
 
         private fun notification(context: Context, title: String, text: String, percent: Int): Notification {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -147,7 +175,7 @@ class DownloadService : Service() {
         }
 
         /** Called by the library whenever the active download or its progress changes. */
-        fun update(context: Context, active: Int?, progress: DownloadProgress?, name: String?) {
+        @Synchronized fun update(context: Context, active: Int?, progress: DownloadProgress?, name: String?) {
             if (active == null) {
                 if (running) {
                     running = false; lastPercent = -2
@@ -173,6 +201,12 @@ class DownloadService : Service() {
 object Launcher {
     fun start(context: Context, spec: org.pocketarcade.madeira.session.LaunchSpec) {
         val graph = AppGraph.instance
+        // Only one Wine session runs at a time (WineActivity is single-instance). Starting another
+        // would overwrite the running game's session record, so its saves would sync under the wrong game.
+        if (org.pocketarcade.madeira.session.SessionState.sessionRunning(context)) {
+            android.widget.Toast.makeText(context, "Stop the current game before starting another one.", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
         graph.scope.launch {
             if (spec.steamAppID != 0) graph.library.sessionStarting()
             org.pocketarcade.madeira.session.LaunchSpec.start(context, spec)

@@ -1491,6 +1491,8 @@ jobs:
     - name: Unit tests and APK
       working-directory: android
       run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
+    - name: Check native libraries load on 16 KB page devices
+      run: python3 runtime/android/check-apk.py android/app/build/outputs/apk/debug/*.apk
     - name: Upload test reports
       if: always()
       uses: actions/upload-artifact@v4
@@ -1546,6 +1548,8 @@ jobs:
     - name: Build bundled Android APK
       working-directory: android
       run: gradle --no-daemon assembleDebug
+    - name: Check native libraries load on 16 KB page devices
+      run: python3 runtime/android/check-apk.py android/app/build/outputs/apk/debug/*.apk
     - name: Confirm APK contains runtime
       run: |
         python3 - <<'PYAPK'
@@ -1617,6 +1621,8 @@ jobs:
     - name: Build bundled Android APK
       working-directory: android
       run: gradle --no-daemon -PwineVariant=madeira assembleDebug
+    - name: Check native libraries load on 16 KB page devices
+      run: python3 runtime/android/check-apk.py android/app/build/outputs/apk/debug/*.apk
     - name: Confirm APK contains the Madeira runtime
       run: |
         python3 - <<'PYAPK'

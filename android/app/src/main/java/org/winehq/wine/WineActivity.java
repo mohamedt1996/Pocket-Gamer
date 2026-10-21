@@ -111,22 +111,53 @@ public class WineActivity extends Activity
     private org.pocketarcade.madeira.session.SessionOverlay overlay;
     private org.pocketarcade.madeira.session.WineLaunch launch;
 
+    // Wine starts once per :wine process: wine_init never returns while it runs,
+    // and cannot be started a second time in the same process.
+    private static boolean wine_started;
+
     private void loadWine(String ignored)
     {
+        synchronized (WineActivity.class) {
+            if (wine_started) {
+                // A recreated activity cannot reattach to the running Wine; end the
+                // process so the next launch starts clean instead of re-running wine_init.
+                Log.w("madeira", "WineActivity recreated after Wine started; ending the session");
+                runOnUiThread(this::endProcess);
+                return;
+            }
+            wine_started = true;
+        }
         try {
+            createProgressDialog(0, "Preparing Windows runtime...");
             // The Kotlin side prepares the prefix and the environment (session/WineLaunch.kt).
             launch = org.pocketarcade.madeira.session.WineLaunch.prepare(this, getIntent());
             System.load(launch.ntdll);
             createProgressDialog(0, "Starting Windows runtime...");
-            runWine(launch.command, launch.environment);
+            String err = runWine(launch.command, launch.environment);
+            // wine_init only returns when Wine could not start.
+            fail(new RuntimeException(err == null || err.isEmpty() ? "Wine exited during startup" : err));
         } catch (Throwable e) {
-            Log.e("madeira", "Runtime initialization failed", e);
-            runOnUiThread(() -> {
-                if (progress_dialog != null) progress_dialog.dismiss();
-                new android.app.AlertDialog.Builder(this).setTitle("Runtime failed")
-                    .setMessage(e.toString()).setPositiveButton("Close", (d,w) -> finish()).show();
-            });
+            fail(e);
         }
+    }
+
+    private void fail(Throwable e)
+    {
+        Log.e("madeira", "Runtime initialization failed", e);
+        runOnUiThread(() -> {
+            if (progress_dialog != null) progress_dialog.dismiss();
+            new android.app.AlertDialog.Builder(this).setTitle("Runtime failed")
+                .setMessage(e.toString()).setCancelable(false)
+                .setPositiveButton("Close", (d,w) -> endProcess()).show();
+        });
+    }
+
+    // Leaves no cached :wine process behind: the app treats a live :wine process as a running game.
+    private void endProcess()
+    {
+        org.pocketarcade.madeira.session.SessionState.markEnded(this);
+        finishAndRemoveTask();
+        android.os.Process.killProcess(android.os.Process.myPid());
     }
 
     @Override protected void onNewIntent(android.content.Intent intent) {
@@ -145,7 +176,7 @@ public class WineActivity extends Activity
         return super.dispatchGenericMotionEvent(event);
     }
 
-    private final void runWine( String cmdline, HashMap<String,String> environ )
+    private final String runWine( String cmdline, HashMap<String,String> environ )
     {
         String[] env = new String[environ.size() * 2];
         int j = 0;
@@ -155,13 +186,16 @@ public class WineActivity extends Activity
             env[j++] = entry.getValue();
         }
 
-        String[] cmd = { environ.get( "WINELOADER" ),
-                         "c:\\windows\\system32\\explorer.exe",
-                         "/desktop=shell,,android",
-                         cmdline };
+        java.util.ArrayList<String> args = new java.util.ArrayList<>();
+        args.add( environ.get( "WINELOADER" ) );
+        args.add( "c:\\windows\\system32\\explorer.exe" );
+        args.add( "/desktop=shell,,android" );
+        args.addAll( org.pocketarcade.madeira.session.CommandLine.split( cmdline ) );
+        String[] cmd = args.toArray( new String[0] );
 
         String err = wine_init( cmd, env );
-        Log.e( LOGTAG, err );
+        Log.e( LOGTAG, String.valueOf( err ) );
+        return err;
     }
 
     private void createProgressDialog( final int max, final String message )
@@ -794,8 +828,9 @@ public class WineActivity extends Activity
             public void mouse(int action, int x, int y, int buttons, int vscroll) {
                 wine_motion_event(desktop_hwnd != 0 ? desktop_hwnd : active_hwnd, action, x, y, buttons, vscroll);
             }
-            public int getDesktopWidth() { return getWindow().getDecorView().getWidth(); }
-            public int getDesktopHeight() { return getWindow().getDecorView().getHeight(); }
+            // The content view is what Wine's desktop covers; the decor view also spans the system bars.
+            public int getDesktopWidth() { return findViewById(android.R.id.content).getWidth(); }
+            public int getDesktopHeight() { return findViewById(android.R.id.content).getHeight(); }
         });
     }
     @Override protected void onPause() {
@@ -830,6 +865,7 @@ public class WineActivity extends Activity
 
     public void destroy_window( int hwnd )
     {
+        if (hwnd == active_hwnd) active_hwnd = desktop_hwnd;
         WineWindow win = get_window( hwnd );
         if (win != null) win.destroy();
     }

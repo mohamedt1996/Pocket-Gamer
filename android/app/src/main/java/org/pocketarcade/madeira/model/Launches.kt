@@ -28,7 +28,7 @@ object Launches {
         }
         if (!graph.prefix.clientInstalled) return "Madeira Dock needs Valve's client components. Download them in Settings › Steam › Madeira Dock."
         if (!graph.account.signedIn) return "Sign in to Steam to play."
-        if (!graph.dock.bundled(graph.runtime.root()) && graph.runtime.bundled()) return "This build has no Madeira Dock host."
+        if (!graph.dock.hostAvailable(graph.runtime)) return "This build has no Madeira Dock host."
         return null
     }
 
