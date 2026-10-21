@@ -131,10 +131,13 @@ for p in sorted(stage.rglob('*')):
     info=_subprocess.run(['readelf','-dW',str(p)],capture_output=True,text=True).stdout
     if 'RUNPATH' in info or 'RPATH' in info: continue
     needed=re.findall(r'\(NEEDED\).*\[(.*?)\]',info)
-    if not any(n in bundled for n in needed): continue
+    rel=p.relative_to(stage).parts
+    # Wine's unix modules also dlopen() bundled libraries by name (win32u ->
+    # libfreetype.so, bcrypt -> libgnutls.so...), so they need a RUNPATH even
+    # when none of their DT_NEEDED entries is bundled.
+    if not any(n in bundled for n in needed) and rel[:3]!=('lib','wine','aarch64-unix'): continue
     patchelf=_shutil.which('patchelf')
     if not patchelf: raise SystemExit(f'{p.relative_to(stage)} needs a RUNPATH: install patchelf')
-    rel=p.relative_to(stage).parts
     runpath='$ORIGIN' if rel[:1]==('lib',) and len(rel)==2 else '$ORIGIN/../..' if rel[:3]==('lib','wine','aarch64-unix') else '$ORIGIN/../lib'
     _subprocess.run([patchelf,'--page-size','16384','--set-rpath',runpath,str(p)],check=True)
     added.append(p.relative_to(stage).as_posix())

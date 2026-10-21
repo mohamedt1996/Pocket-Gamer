@@ -12,6 +12,9 @@ turns on the fork's host-independent parts that Madeira's Wine relies on:
 - WoW64: honour WOW64_CPURESERVED_FLAG_RESET_STATE, which is how Madeira's
   wow64 asks for the 32-bit registers to be reloaded.
 - Phone-sized per-thread lookup cache (2 MB L1 cap, 32 MB block arena).
+- ExitToX64: native short-circuit of ARM64EC fast-forward sequences (x18
+  TEB, no pool aliases). Madeira's Wine routes FFS calls here, including the
+  FEX DLL's own entry point before ProcessInit; emulating that crashed.
 
 and supplies non-iOS fallbacks where the fork uses iOS helpers outside their
 guards: identity PE-alias translation, no code-buffer sweep, zero VA band, no
@@ -70,6 +73,54 @@ index ffa2709..b96f959 100644
    /* iOS-Madeira: halve the per-thread block-backing arena — it's committed
     * upfront on iOS (see LookupCache.cpp) and 128MB × ~19 threads was OOM-ing
     * the process. 64MB still backs 1024 guest code pages per thread; on
+diff --git a/Source/Windows/ARM64EC/Module.S b/Source/Windows/ARM64EC/Module.S
+index 668b1d2..696a532 100644
+--- a/Source/Windows/ARM64EC/Module.S
++++ b/Source/Windows/ARM64EC/Module.S
+@@ -86,6 +86,43 @@ check_target_ec:
+   // Expects target code address in x9, and to be called using a 'blr x16' instruction.
+ .globl ExitToX64
+ ExitToX64:
++#ifdef FEX_ANDROID_HOST
++  // Android: native short-circuit of fast-forward sequences (FFS), after the
++  // fork's iOS version below. An ARM64EC DLL's x64-callable stub -- including
++  // its PE entry point -- is
++  //   48 8b c4  48 89 58 20  55  5d  e9 rel32   (mov rax,rsp; mov [rax+20h],rbx;
++  //                                               push rbp; pop rbp; jmp rel32)
++  // and jumps to native ARM64EC code. Madeira's Wine sends such calls here
++  // instead of resolving them, including the FEX DLL's own entry point, which it
++  // calls before ProcessInit: emulating it then would run an uninitialised JIT.
++  // When the jmp target is EC code, branch to it natively with lr intact. The TEB
++  // is x18 (Wine on Linux/Android); no JIT-pool aliases exist to translate.
++  // Scratch: x16, x17 and x23 (unused by ARM64EC code).
++  ldr x16, [x9]
++  movz x17, #0x8b48
++  movk x17, #0x48c4, lsl #16
++  movk x17, #0x5889, lsl #32
++  movk x17, #0x5520, lsl #48
++  cmp x16, x17
++  b.ne android_ffs_no_bypass
++  ldrh w16, [x9, #8]
++  movz w17, #0xe95d
++  cmp w16, w17
++  b.ne android_ffs_no_bypass
++  ldursw x16, [x9, #10]  // jmp rel32 (signed)
++  add x17, x9, x16
++  add x17, x17, #14      // target = FFS base + 14 + rel32
++  ldr x16, [x18, #0x60]  // TEB->PEB
++  ldr x16, [x16, #0x368] // PEB->EcCodeBitMap
++  cbz x16, android_ffs_no_bypass
++  lsr x23, x17, #18
++  ldr x16, [x16, x23, lsl #3]
++  lsr x23, x17, #12
++  lsr x16, x16, x23
++  tbz x16, #0, android_ffs_no_bypass
++  br x17
++android_ffs_no_bypass:
++#endif
+ #ifdef FEX_IOS_HOST
+   // iOS ml316 FFS BYPASS (root cause of the ml315 SCM-RPC ccontext=0x10 kill).
+   //
 diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
 index f79c770..e556940 100644
 --- a/Source/Windows/ARM64EC/Module.cpp
