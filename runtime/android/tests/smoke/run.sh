@@ -28,14 +28,21 @@ annotate() { # level title file
   body=$(tail -c 6000 "$3" 2>/dev/null | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\r/%0D/g;s/\n/%0A/g')
   echo "::$1 title=$2::$body"
 }
-step() { # name timeout command...
+step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> NAME.log
   local name=$1 limit=$2; shift 2
-  local log="$LOGS/$name.log" start=$SECONDS
+  local out="$LOGS/$name.out" log="$LOGS/$name.log" sum="$LOGS/$name.summary" start=$SECONDS
   echo "== $name: $*"
-  timeout --kill-after=20 "$limit" "$@" > "$log" 2>&1
+  timeout --kill-after=20 "$limit" "$@" > "$out" 2> "$log"
   local rc=$?
-  echo "exit=$rc seconds=$((SECONDS-start))" >> "$log"
-  if [ $rc -eq 0 ]; then annotate notice "$name passed" "$log"; else annotate error "$name failed (exit $rc)" "$log"; failed=1; fi
+  {
+    echo "exit=$rc seconds=$((SECONDS-start))"
+    cat "$out"
+    echo "--- log (errors) ---"
+    grep -E 'err:|wine:|DXVK|DXGI|D3D11|vkd3d|Vulkan|vulkan|info:  |warn:  |err:  |Fontconfig|not found|failed|Failed' "$log" \
+      | grep -vE ':trace:|fixme:' | tail -n 60
+  } > "$sum"
+  cat "$sum"
+  if [ $rc -eq 0 ]; then annotate notice "$name passed" "$sum"; else annotate error "$name failed (exit $rc)" "$sum"; failed=1; fi
   return $rc
 }
 
@@ -65,9 +72,10 @@ printf 'WINE REGISTRY Version 2\n\n#arch=win64\n\n[Software\\\\Wine\\\\Drivers]\
 WINEENV=(
   HOME="$GAME" TMPDIR="$GAME/tmp" WINEPREFIX="$PREFIX"
   WINELOADER="$RT/lib/wine/aarch64-unix/wine" WINESERVER="$RT/bin/wineserver" WINEDLLPATH="$RT/lib/wine"
-  WINEDEBUG="+timestamp,+pid,+seh,err+all,warn+module" PATH="$RT/bin:/system/bin"
+  WINEDEBUG="+timestamp,+pid,warn+module" PATH="$RT/bin:/system/bin"
   LC_ALL=C.UTF-8 LANG=C.UTF-8 WINEESYNC=0 WINEFSYNC=0 WINENTSYNC=0
   XDG_CACHE_HOME="$APP/wine-cache" ANDROID_ROOT=/system ANDROID_DATA=/data
+  FONTCONFIG_FILE="$RT/etc/fonts/fonts.conf"
   WINEDLLOVERRIDES="mscoree,mshtml=d"
 )
 WINE=(env -i "${WINEENV[@]}")

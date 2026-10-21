@@ -208,13 +208,17 @@ class WineLaunch private constructor(
             env["WINESERVER"] = File(root, "bin/wineserver").absolutePath
             env["WINEDLLPATH"] = File(root, "lib/wine").absolutePath
             env["WINEDEBUGLOG"] = File(home, "wine.log").absolutePath
-            env["WINEDEBUG"] = if (spec.diagnostics) "+timestamp,+pid,+seh,+loaddll,warn+all" else "+timestamp,+pid,+seh"
+            // +seh traces every exception a game raises (many do so constantly): diagnostics only.
+            env["WINEDEBUG"] = if (spec.diagnostics) "+timestamp,+pid,+seh,+loaddll,warn+all" else "+timestamp,+pid"
             env["LD_LIBRARY_PATH"] = File(root, "lib").absolutePath + ":" + File(root, "lib/wine/aarch64-unix").absolutePath + ":" + context.applicationInfo.nativeLibraryDir
             env["PATH"] = File(root, "bin").absolutePath + ":/system/bin"
             env["LC_ALL"] = "C.UTF-8"; env["LANG"] = "C.UTF-8"
             env["WINEESYNC"] = "0"; env["WINEFSYNC"] = "0"; env["WINENTSYNC"] = "0"
             // Wine looks for its Mono and Gecko installers in $XDG_CACHE_HOME/wine (WineMono).
             env["XDG_CACHE_HOME"] = File(context.filesDir, "wine-cache").absolutePath
+            // The bundled fontconfig was built for Termux and looks for its config there; this one
+            // points at Android's own fonts (package-runtime.py writes it).
+            File(root, "etc/fonts/fonts.conf").takeIf { it.isFile }?.let { env["FONTCONFIG_FILE"] = it.absolutePath }
             val overrides = ArrayList<String>()
             when (spec.graphics) {
                 "dxvk", "vkd3d" -> {

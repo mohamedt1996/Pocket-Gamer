@@ -123,6 +123,11 @@ for good,bad in ((b'libvulkan.so',b'libvulkan.so.1'),(b'libEGL.so',b'libEGL.so.1
     if has_cstring(win32u,bad) or not has_cstring(win32u,good):
         raise SystemExit(f'win32u.so loads {bad.decode()} instead of Android\'s {good.decode()}: rebuild Wine with android-sonames.py')
 
+# Fontconfig (used by win32u for system fonts) has Termux's config path compiled in.
+# WineLaunch points FONTCONFIG_FILE here instead: Android's fonts, cache in XDG_CACHE_HOME.
+(stage/'etc/fonts').mkdir(parents=True,exist_ok=True)
+(stage/'etc/fonts/fonts.conf').write_text('<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n<fontconfig>\n  <dir>/system/fonts</dir>\n  <dir>/product/fonts</dir>\n  <cachedir prefix="xdg">fontconfig</cachedir>\n</fontconfig>\n')
+
 # Re-use the upstream UI matched to this Wine build; alter only startup/settings.
 import subprocess
 subprocess.run([sys.executable,str(root/'runtime/android/prepare-java.py'),
