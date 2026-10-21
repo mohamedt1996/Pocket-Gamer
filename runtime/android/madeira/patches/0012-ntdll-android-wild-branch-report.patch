@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Pocket Arcade contributors <noreply@pocketarcade.invalid>
+Date: Wed, 21 Oct 2026 22:00:00 +0000
+Subject: [PATCH] ntdll: Name the caller of a branch to a null address (ARM64EC)
+
+---
+diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
+index 2a1333f..9af8239 100644
+--- a/dlls/ntdll/signal_arm64ec.c
++++ b/dlls/ntdll/signal_arm64ec.c
+@@ -3555,10 +3555,59 @@ static void dispatch_syscall( ARM64_NT_CONTEXT *context )
+ }
+ 
+ 
++/* Module+offset of an address, for android_report_wild_branch. */
++static void android_describe( const char *what, ULONG64 addr )
++{
++    LDR_DATA_TABLE_ENTRY *mod;
++    if (addr >= 0x10000 && !LdrFindEntryForAddress( (void *)(ULONG_PTR)addr, &mod ))
++        ERR( "  %s=%p %s+0x%lx\n", what, (void *)(ULONG_PTR)addr, debugstr_w(mod->BaseDllName.Buffer),
++             (unsigned long)(addr - (ULONG_PTR)mod->DllBase) );
++    else
++        ERR( "  %s=%p\n", what, (void *)(ULONG_PTR)addr );
++}
++
++static void android_report_wild_branch( const ARM64_NT_CONTEXT *ctx )
++{
++    const ULONG64 *fp = (const ULONG64 *)(ULONG_PTR)ctx->Fp;
++    char name[16];
++    int i;
++
++    ERR( "wild branch to %p in thread %04lx, in simulation %u\n", (void *)(ULONG_PTR)ctx->Pc,
++         GetCurrentThreadId(), get_arm64ec_cpu_area()->InSimulation );
++    android_describe( "lr", ctx->Lr );
++    android_describe( "x16", ctx->X16 );
++    android_describe( "x17", ctx->X17 );
++    android_describe( "x9", ctx->X9 );
++    android_describe( "x10", ctx->X10 );
++    android_describe( "x11", ctx->X11 );
++    ERR( "  x0=%p x1=%p x2=%p x3=%p sp=%p fp=%p\n", (void *)(ULONG_PTR)ctx->X0, (void *)(ULONG_PTR)ctx->X1,
++         (void *)(ULONG_PTR)ctx->X2, (void *)(ULONG_PTR)ctx->X3, (void *)(ULONG_PTR)ctx->Sp, fp );
++    for (i = 0; i < 16 && fp && !((ULONG_PTR)fp & 7); i++)
++    {
++        MEMORY_BASIC_INFORMATION info;
++        if (NtQueryVirtualMemory( GetCurrentProcess(), fp, MemoryBasicInformation, &info, sizeof(info), NULL )
++            || info.State != MEM_COMMIT || (char *)fp + 16 > (char *)info.BaseAddress + info.RegionSize)
++            break;
++        sprintf( name, "#%d", i );
++        android_describe( name, fp[1] );
++        if ((ULONG_PTR)fp[0] <= (ULONG_PTR)fp) break;
++        fp = (const ULONG64 *)(ULONG_PTR)fp[0];
++    }
++}
++
+ static void * __attribute__((used)) prepare_exception_arm64ec( EXCEPTION_RECORD *rec, ARM64EC_NT_CONTEXT *context, ARM64_NT_CONTEXT *arm_ctx )
+ {
+     if (rec->ExceptionCode == STATUS_EMULATION_SYSCALL) dispatch_syscall( arm_ctx );
+     context_arm_to_x64( context, arm_ctx );
++    /* Android: a branch to an address outside every module (a null or stale
++     * function pointer) is always a bug and the exception record alone cannot
++     * say who made it. Name the caller: lr, the frame-pointer chain and the
++     * registers that carry call targets, each resolved to module+offset. */
++    if (rec->ExceptionCode == STATUS_ACCESS_VIOLATION && arm_ctx->Pc < 0x10000)
++    {
++        static LONG wild_reported;
++        if (InterlockedIncrement( &wild_reported ) <= 4) android_report_wild_branch( arm_ctx );
++    }
+     /* iOS-Madeira task#34 probe: FEX's LogMan output is invisible on iOS (its
+      * write(2) resolves to the PE CRT's WriteFile → unplumbed std handle),
+      * so trace the guest-exception conversion from the wine side. Rate-

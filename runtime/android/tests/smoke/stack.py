@@ -64,18 +64,31 @@ def read64(addr):
     except (OSError, ValueError, struct.error):
         return None
 
+COMPACT = os.environ.get('STACK_COMPACT') == '1'
+
+def short(desc):
+    # "0xADDR lib+0xOFF sym+0xN" -> "lib+0xOFF(sym)"
+    p = desc.split()
+    return p[1] + (f'({p[2].split("+")[0]})' if len(p) > 2 and p[2] != '?' else '') if len(p) > 1 else p[0]
+
 for block in re.split(r'\nThread ', '\n' + regs)[1:]:
     head = block.splitlines()[0]
     r = dict(re.findall(r'^(pc|lr|x29|sp)\s+(0x[0-9a-f]+)', block, re.M))
     if 'pc' not in r: continue
-    print(f'Thread {head}')
-    print('  pc', describe(int(r['pc'], 16)))
-    print('  lr', describe(int(r['lr'], 16)))
+    frames = [describe(int(r['pc'], 16)), describe(int(r['lr'], 16))]
     fp = int(r.get('x29', '0x0'), 16)
     for depth in range(24):
         if not fp or fp & 7: break
         nxt, ret = read64(fp), read64(fp + 8)
         if ret is None: break
-        print(f'  #{depth}', describe(ret))
+        frames.append(describe(ret))
         if not nxt or nxt <= fp: break
         fp = nxt
+    if COMPACT:
+        lwp = re.search(r'LWP (\d+)', head)
+        print(f'T{lwp.group(1) if lwp else "?"}: ' + ' < '.join(short(f) for f in frames[:14]))
+        continue
+    print(f'Thread {head}')
+    print('  pc', frames[0]); print('  lr', frames[1])
+    for depth, f in enumerate(frames[2:]):
+        print(f'  #{depth}', f)

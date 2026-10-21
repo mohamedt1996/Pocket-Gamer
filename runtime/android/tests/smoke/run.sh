@@ -24,9 +24,14 @@ TERMUX=/data/data/com.termux/files/usr
 mkdir -p "$LOGS"
 failed=0
 
+annotations=0
 annotate() { # level title file
   local body
-  body=$(tail -c 6000 "$3" 2>/dev/null | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\r/%0D/g;s/\n/%0A/g')
+  # GitHub keeps 10 annotations of a level per step: the last one is the run's summary.
+  annotations=$((annotations + 1))
+  if [ "$1" = error ] && [ $annotations -gt 9 ] && [ "$2" != "Runtime test failed" ]; then return; fi
+  # GitHub keeps the first ~4 KB of a message: files put what matters first.
+  body=$(head -c 3900 "$3" 2>/dev/null | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\r/%0D/g;s/\n/%0A/g')
   echo "::$1 title=$2::$body"
 }
 step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> NAME.log
@@ -65,12 +70,12 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
   {
     echo "exit=$rc seconds=$((SECONDS-start))"
     if [ -n "${RESULT:-}" ]; then cat "$RESULT" 2>/dev/null || echo "(no result file)"; else cat "$out"; fi
+    # First, since annotations keep only the start of a long message.
+    [ $rc -eq 124 ] && { echo "--- hung: busy threads and stacks ---"; grep -v 'anon_pipe_read\|ep_poll\|hrtimer_nanosleep\|skb_wait\|poll_schedule\|do_sys_poll' "$LOGS/$name.hang"; }
+    [ $done_ -eq 2 ] && { echo "--- program exited without a result: end of its log ---"; grep -v 'trace:\|fixme:\|^info:\|autostart' "$log" | tail -n 25; }
     echo "--- log (errors) ---"
     grep -E 'err:|wine:|DXVK|DXGI|D3D11|vkd3d|Vulkan|vulkan|info:  |warn:  |err:  |Fontconfig|not found|failed|Failed' "$log" \
-      | grep -vE 'trace:seh|fixme:|_r_debug' | tail -n 30
-    [ $done_ -eq 2 ] && { echo "--- program exited without a result: end of its log ---"; grep -v 'trace:\|fixme:\|^info:' "$log" | tail -n 40; }
-    # Last, since annotations keep only the end of a long message.
-    [ $rc -eq 124 ] && { echo "--- hung: busy threads and stacks ---"; grep -v 'anon_pipe_read\|ep_poll\|hrtimer_nanosleep\|skb_wait\|poll_schedule' "$LOGS/$name.hang"; }
+      | grep -vE 'trace:seh|fixme:|_r_debug|autostart|egl_init|LdrGetProcedureAddress' | tail -n 30
   } > "$sum"
   cat "$sum"
   # GitHub keeps only 10 annotations of a kind per step: details for failures only,
@@ -80,27 +85,29 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
   RESULT=
   return $ok
 }
-hang_report() { # every thread of every runtime process: state, kernel wait channel, syscall
-  local p tid
-  for p in $(pgrep -f "$RT|\.exe" 2>/dev/null); do
-    echo "pid $p: $(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-150)"
-    for tid in $(ls /proc/$p/task 2>/dev/null); do
-      echo "  tid $tid $(awk '{print $3}' /proc/$p/task/$tid/stat 2>/dev/null) wchan=$(cat /proc/$p/task/$tid/wchan 2>/dev/null) syscall=$(sudo cat /proc/$p/task/$tid/syscall 2>/dev/null | cut -d' ' -f1-3)"
-    done
-  done | head -60
+hang_report() {
+  # Native stacks first (annotations keep the start): each hung test program and
+  # services.exe, which every program's start waits on.
+  local p tid n
+  for p in $(pgrep -f 'smoke\\' 2>/dev/null) $(pgrep -f 'system32.services\.exe' 2>/dev/null); do
+    echo "=== stacks $p: $(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-60)"
+    sudo STACK_COMPACT=1 STACK_SYMBOLS="${STACK_SYMBOLS:-}" timeout 150 python3 "$HERE/stack.py" "$p" 2>&1 | head -30
+  done
   # Where each test program's threads are over a few seconds: a pc that keeps moving is
   # slow work or a spin, one that never moves is a wait.
   for p in $(pgrep -f 'smoke\\' 2>/dev/null); do
-    for n in 1 2 3 4; do
+    for n in 1 2 3; do
       echo "sample $n pid $p: $(sudo timeout 30 gdb -p "$p" -batch -nx -ex 'thread apply all p/x $pc' 2>/dev/null | grep -E '^\$' | tr '\n' ' ')"
       sleep 2
     done
   done
-  # Native stack of each hung test program (gdb reads bionic's and the libraries' symbols).
-  for p in $(pgrep -f 'smoke\\' 2>/dev/null); do
-    echo "=== gdb $p"
-    sudo STACK_SYMBOLS="${STACK_SYMBOLS:-}" timeout 150 python3 "$HERE/stack.py" "$p" 2>&1 | head -60
-  done
+  # Every thread of every runtime process: state, kernel wait channel, syscall.
+  for p in $(pgrep -f "$RT|\.exe" 2>/dev/null); do
+    echo "pid $p: $(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null | cut -c1-80)"
+    for tid in $(ls /proc/$p/task 2>/dev/null); do
+      echo "  tid $tid $(awk '{print $3}' /proc/$p/task/$tid/stat 2>/dev/null) wchan=$(cat /proc/$p/task/$tid/wchan 2>/dev/null) syscall=$(sudo cat /proc/$p/task/$tid/syscall 2>/dev/null | cut -d' ' -f1-3)"
+    done
+  done | head -60
 }
 cleanup() { # a failed or hung step must not leave Wine processes behind for the next one
   [ -n "${WINE+x}" ] && timeout 30 "${WINE[@]}" "$RT/bin/wineserver" -k > /dev/null 2>&1

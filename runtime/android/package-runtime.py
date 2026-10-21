@@ -133,10 +133,13 @@ for p in sorted(stage.rglob('*')):
     if '(NEEDED)' not in info: continue   # static (wine-preloader): nothing to look up
     needed=re.findall(r'\(NEEDED\).*\[(.*?)\]',info)
     rel=p.relative_to(stage).parts
-    # Wine's unix modules also dlopen() bundled libraries by name (win32u ->
-    # libfreetype.so, bcrypt -> libgnutls.so...), so they need a RUNPATH even
-    # when none of their DT_NEEDED entries is bundled.
-    if not any(n in bundled for n in needed) and rel[:3]!=('lib','wine','aarch64-unix'): continue
+    # A few Wine unix modules also dlopen() bundled libraries by name (win32u ->
+    # libfreetype.so/libfontconfig.so, dwrite -> libfreetype.so, bcrypt/secur32/crypt32 -> libgnutls.so,
+    # winebus -> libSDL2.so), so they need a RUNPATH even when none of their
+    # DT_NEEDED entries is bundled. Only those: rewriting the layout of the Wine
+    # loader or ntdll.so (which sit at addresses Wine reserves) is not worth the risk.
+    dlopeners={'win32u.so','dwrite.so','bcrypt.so','secur32.so','crypt32.so','winebus.so'}
+    if not any(n in bundled for n in needed) and not (rel[:3]==('lib','wine','aarch64-unix') and p.name in dlopeners): continue
     patchelf=_shutil.which('patchelf')
     if not patchelf: raise SystemExit(f'{p.relative_to(stage)} needs a RUNPATH: install patchelf')
     runpath='$ORIGIN' if rel[:1]==('lib',) and len(rel)==2 else '$ORIGIN/../..' if rel[:3]==('lib','wine','aarch64-unix') else '$ORIGIN/../lib'
