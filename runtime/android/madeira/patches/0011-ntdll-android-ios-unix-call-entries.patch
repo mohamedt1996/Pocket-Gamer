@@ -1,0 +1,72 @@
+From: Pocket Arcade contributors
+Subject: [PATCH] ntdll: Android entries for the iOS-only unix calls (ordinals 8-12)
+
+---
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index ccda16c..f55b8f4 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -1005,6 +1005,35 @@ static NTSTATUS unwind_builtin_dll( void *args )
+ #endif /* SO_DLLS_SUPPORTED */
+ 
+ 
++/* Madeira's PE ntdll numbers five more unix calls (unixlib.h, ordinals 8-12)
++ * that only its iOS unix side implements. Without entries here the dispatcher
++ * indexes past the table and branches into whatever follows it: a crash during
++ * every x64 (ARM64EC) start-up (ordinal 12) and a random call on every
++ * critical-section initialisation in every process (ordinal 10). On Android
++ * there is no JIT pool, so: nothing is aliased, no arena is reserved, and the
++ * iOS-only hooks are not supported. The parameter structures use fixed-width
++ * fields, so the same entries serve 32-bit (WoW64) callers. */
++static NTSTATUS ios_unsupported( void *args )
++{
++    return STATUS_NOT_SUPPORTED;
++}
++
++static NTSTATUS ios_jit_alias_probe_none( void *args )
++{
++    struct ios_jit_alias_probe_params *params = args;
++    if (params->size < sizeof(*params)) return STATUS_INVALID_PARAMETER;
++    params->rw = params->base = params->end = 0;
++    params->write_gen = 0;
++    return STATUS_SUCCESS;
++}
++
++static NTSTATUS ios_get_fex_arena_none( void *args )
++{
++    struct ios_get_fex_arena_params *params = args;
++    params->base = params->end = 0;
++    return STATUS_SUCCESS;
++}
++
+ static const unixlib_entry_t unix_call_funcs[] =
+ {
+     load_so_dll,
+@@ -1015,8 +1044,15 @@ static const unixlib_entry_t unix_call_funcs[] =
+     unixcall_wine_server_handle_to_fd,
+     unixcall_wine_spawnvp,
+     system_time_precise,
++    ios_unsupported,            /* unix_ios_push_jit_aliases */
++    ios_unsupported,            /* unix_ios_register_hold_release */
++    ios_jit_alias_probe_none,   /* unix_ios_jit_alias_probe */
++    ios_unsupported,            /* unix_ios_mono_bridge_ptr */
++    ios_get_fex_arena_none,     /* unix_ios_get_fex_arena */
+ };
+ 
++C_ASSERT( ARRAY_SIZE(unix_call_funcs) == unix_ios_get_fex_arena + 1 );
++
+ 
+ #ifdef _WIN64
+ 
+@@ -1033,6 +1069,11 @@ const unixlib_entry_t unix_call_wow64_funcs[] =
+     wow64_wine_server_handle_to_fd,
+     wow64_wine_spawnvp,
+     system_time_precise,
++    ios_unsupported,            /* unix_ios_push_jit_aliases */
++    ios_unsupported,            /* unix_ios_register_hold_release */
++    ios_jit_alias_probe_none,   /* unix_ios_jit_alias_probe */
++    ios_unsupported,            /* unix_ios_mono_bridge_ptr */
++    ios_get_fex_arena_none,     /* unix_ios_get_fex_arena */
+ };
+ 
+ #endif  /* _WIN64 */
