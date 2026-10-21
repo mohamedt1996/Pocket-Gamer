@@ -8,8 +8,7 @@
 #include <d3d11.h>
 #include <d3d12.h>
 #include <dxgi.h>
-#include <stdio.h>
-#include <string.h>
+#include "out.h"
 
 int main(int argc, char **argv)
 {
@@ -25,23 +24,22 @@ int main(int argc, char **argv)
         DXGI_ADAPTER_DESC desc = {0};
         if (SUCCEEDED(ID3D11Device_QueryInterface(dev11, &IID_IDXGIDevice, (void **)&dxgi)) &&
             SUCCEEDED(IDXGIDevice_GetAdapter(dxgi, &adapter)) && SUCCEEDED(IDXGIAdapter_GetDesc(adapter, &desc)))
-            printf("INFO adapter %ls vendor %04x device %04x\n", desc.Description, desc.VendorId, desc.DeviceId);
+            out("INFO adapter %ls vendor %04x device %04x", desc.Description, desc.VendorId, desc.DeviceId);
         if (adapter) IDXGIAdapter_Release(adapter);
         if (dxgi) IDXGIDevice_Release(dxgi);
-        printf("PASS d3d11 device (feature level %x)\n", level);
+        out("PASS d3d11 device (feature level %x)", level);
         ID3D11Device_Release(dev11);
     } else {
-        printf("FAIL d3d11 device: hr %08lx\n", hr);
+        out("FAIL d3d11 device: hr %08lx", hr);
         failures++;
     }
-    fflush(stdout);
 
     if (want12) {
         ID3D12Device *dev12 = NULL;
         hr = D3D12CreateDevice(NULL, D3D_FEATURE_LEVEL_11_0, &IID_ID3D12Device, (void **)&dev12);
-        if (SUCCEEDED(hr)) { printf("PASS d3d12 device\n"); ID3D12Device_Release(dev12); }
-        else { printf("FAIL d3d12 device: hr %08lx\n", hr); failures++; }
+        if (SUCCEEDED(hr)) { out("PASS d3d12 device"); ID3D12Device_Release(dev12); }
+        else { out("FAIL d3d12 device: hr %08lx", hr); failures++; }
     }
-    printf(failures ? "RESULT FAIL %d\n" : "RESULT PASS\n", failures);
+    if (failures) out("RESULT FAIL %d", failures); else out("RESULT PASS");
     return failures ? 1 : 0;
 }

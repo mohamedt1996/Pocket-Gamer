@@ -4,13 +4,12 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
-#include <stdio.h>
-#include <string.h>
+#include "out.h"
 
 static int failures;
-#define CHECK(name, cond, ...) do { if (cond) printf("PASS %s\n", name); \
-    else { failures++; printf("FAIL %s: ", name); printf(__VA_ARGS__); printf("\n"); } fflush(stdout); } while (0)
-#define INFO(...) do { printf("INFO "); printf(__VA_ARGS__); printf("\n"); fflush(stdout); } while (0)
+#define CHECK(name, cond, ...) do { if (cond) out("PASS %s", name); \
+    else { char why_[256]; snprintf(why_, sizeof(why_), __VA_ARGS__); failures++; out("FAIL %s: %s", name, why_); } } while (0)
+#define INFO(...) do { char info_[256]; snprintf(info_, sizeof(info_), __VA_ARGS__); out("INFO %s", info_); } while (0)
 
 static DWORD WINAPI worker(void *arg) { for (int i = 0; i < 100000; i++) InterlockedIncrement((LONG *)arg); return 0; }
 
@@ -136,6 +135,6 @@ int main(void)
     CHECK("sockets", bound, "error %d", WSAGetLastError());
     if (s != INVALID_SOCKET) closesocket(s);
 
-    printf(failures ? "RESULT FAIL %d\n" : "RESULT PASS\n", failures);
+    if (failures) out("RESULT FAIL %d", failures); else out("RESULT PASS");
     return failures ? 1 : 0;
 }

@@ -34,16 +34,27 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
   echo "== $name: $*"
   timeout --kill-after=20 "$limit" "$@" > "$out" 2> "$log"
   local rc=$?
+  # Windows test programs write <program>.txt beside themselves (out.h); judge by that file.
+  local ok=$rc
+  if [ -n "${RESULT:-}" ]; then
+    grep -q '^RESULT PASS' "$RESULT" 2>/dev/null && ok=0 || ok=1
+  fi
   {
     echo "exit=$rc seconds=$((SECONDS-start))"
-    cat "$out"
+    if [ -n "${RESULT:-}" ]; then cat "$RESULT" 2>/dev/null || echo "(no result file)"; else cat "$out"; fi
     echo "--- log (errors) ---"
     grep -E 'err:|wine:|DXVK|DXGI|D3D11|vkd3d|Vulkan|vulkan|info:  |warn:  |err:  |Fontconfig|not found|failed|Failed' "$log" \
-      | grep -vE ':trace:|fixme:' | tail -n 60
+      | grep -vE 'trace:seh|fixme:|_r_debug' | tail -n 60
   } > "$sum"
   cat "$sum"
-  if [ $rc -eq 0 ]; then annotate notice "$name passed" "$sum"; else annotate error "$name failed (exit $rc)" "$sum"; failed=1; fi
-  return $rc
+  if [ $ok -eq 0 ]; then annotate notice "$name passed" "$sum"; else annotate error "$name failed (exit $rc)" "$sum"; failed=1; cleanup; fi
+  RESULT=
+  return $ok
+}
+cleanup() { # a failed or hung step must not leave Wine processes behind for the next one
+  [ -n "${WINE+x}" ] && timeout 30 "${WINE[@]}" "$RT/bin/wineserver" -k > /dev/null 2>&1
+  pkill -9 -f "$RT" > /dev/null 2>&1
+  sleep 1
 }
 
 # 1. The runtime as PortRuntime installs it.
@@ -81,7 +92,7 @@ WINEENV=(
 WINE=(env -i "${WINEENV[@]}")
 
 step loader-version 60 "${WINE[@]}" "$RT/lib/wine/aarch64-unix/wine" --version
-step wineboot 1500 "${WINE[@]}" "$RT/lib/wine/aarch64-unix/wine" wineboot --init
+step wineboot 900 "${WINE[@]}" "$RT/lib/wine/aarch64-unix/wine" wineboot --init
 env -i "${WINEENV[@]}" timeout 120 "$RT/bin/wineserver" -w || true
 grep -q '^#arch=win64' "$PREFIX/system.reg" || { echo "::error title=prefix::system.reg lost #arch=win64"; failed=1; }
 cp "$PREFIX/system.reg" "$PREFIX/user.reg" "$LOGS/" 2>/dev/null
@@ -90,8 +101,10 @@ cp "$PREFIX/system.reg" "$PREFIX/user.reg" "$LOGS/" 2>/dev/null
 mkdir -p "$PREFIX/drive_c/smoke"
 cp "$TESTS"/*.exe "$PREFIX/drive_c/smoke/"
 cd "$PREFIX/drive_c/smoke"
-step cli-x64 600 "${WINE[@]}" "$RT/lib/wine/aarch64-unix/wine" 'C:\smoke\cli-x86_64.exe'
-step cli-x86 600 "${WINE[@]}" "$RT/lib/wine/aarch64-unix/wine" 'C:\smoke\cli-i686.exe'
+SMOKE="$PREFIX/drive_c/smoke"
+LOADER="$RT/lib/wine/aarch64-unix/wine"
+RESULT="$SMOKE/cli-x86_64.txt" step cli-x64 600 "${WINE[@]}" "$LOADER" 'C:\smoke\cli-x86_64.exe'
+RESULT="$SMOKE/cli-i686.txt" step cli-x86 600 "${WINE[@]}" "$LOADER" 'C:\smoke\cli-i686.exe'
 
 # Graphics devices: DXVK and VKD3D installed into the prefix as WineLaunch does,
 # with lavapipe behind Android's libvulkan.so name.
@@ -101,8 +114,11 @@ cp "$RT"/graphics/dxvk/x86/*.dll "$RT"/graphics/vkd3d/x86/*.dll "$WOW/"
 ICD=$(ls "$TERMUX"/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)
 GFX=(WINEDLLOVERRIDES="mscoree,mshtml=d;d3d8,d3d9,d3d10core,d3d11,dxgi=n,b;d3d12,d3d12core=n,b"
      VK_ICD_FILENAMES="$ICD" DXVK_LOG_LEVEL=info VKD3D_DEBUG=warn DXVK_LOG_PATH=none)
-step devices-x64 600 "${WINE[@]}" "${GFX[@]}" "$RT/lib/wine/aarch64-unix/wine" 'C:\smoke\devices-x86_64.exe'
-step devices-x86 600 "${WINE[@]}" "${GFX[@]}" "$RT/lib/wine/aarch64-unix/wine" 'C:\smoke\devices-i686.exe'
+# Plain Vulkan first (winevulkan + driver), then DXVK/VKD3D on top of it.
+RESULT="$SMOKE/vk-i686.txt" step vk-x86 180 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\vk-i686.exe'
+RESULT="$SMOKE/vk-x86_64.txt" step vk-x64 180 "${WINE[@]}" "${GFX[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,+vulkan" "$LOADER" 'C:\smoke\vk-x86_64.exe'
+RESULT="$SMOKE/devices-i686.txt" step devices-x86 300 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\devices-i686.exe'
+RESULT="$SMOKE/devices-x86_64.txt" step devices-x64 300 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\devices-x86_64.exe'
 
-env -i "${WINEENV[@]}" timeout 60 "$RT/bin/wineserver" -k || true
+cleanup
 exit $failed

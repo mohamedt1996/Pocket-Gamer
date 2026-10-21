@@ -1533,7 +1533,9 @@ jobs:
         name: Android-component-addons
         path: .android-out/addons
     - name: Assemble and verify runtime bundle
-      run: python3 runtime/android/package-runtime.py
+      run: |
+        sudo apt-get install -y -qq patchelf
+        python3 runtime/android/package-runtime.py
     - name: Configure SDK and NDK
       shell: bash
       run: |
@@ -1606,7 +1608,9 @@ jobs:
         name: Android-component-addons
         path: .android-out/addons
     - name: Assemble and verify runtime bundle
-      run: python3 runtime/android/package-runtime.py --wine wine-madeira
+      run: |
+        sudo apt-get install -y -qq patchelf
+        python3 runtime/android/package-runtime.py --wine wine-madeira
     - name: Configure SDK and NDK
       shell: bash
       run: |
@@ -1686,6 +1690,7 @@ jobs:
         for t in x86_64 i686; do
           $t-w64-mingw32-gcc -O2 -o tests-bin/cli-$t.exe runtime/android/tests/smoke/cli.c -lws2_32
           $t-w64-mingw32-gcc -O2 -o tests-bin/devices-$t.exe runtime/android/tests/smoke/devices.c -ld3d11 -ld3d12 -ldxgi
+          $t-w64-mingw32-gcc -O2 -idirafter /usr/include -o tests-bin/vk-$t.exe runtime/android/tests/smoke/vk.c
         done
     - name: Run the runtime
       run: bash runtime/android/tests/smoke/run.sh apk/*.apk tests-bin logs

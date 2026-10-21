@@ -6,7 +6,7 @@ usage: package-runtime.py [--wine wine|wine-madeira]
 fork, the default) or "wine-madeira" (Madeira's Wine, experimental).
 """
 from pathlib import Path
-import hashlib,json,shutil,struct,sys,zipfile
+import hashlib,json,re,shutil,struct,sys,zipfile
 root=Path(__file__).resolve().parents[2]
 args=sys.argv[1:]
 wine='wine'
@@ -111,7 +111,31 @@ for p in sorted(stage.rglob('*')):
     _,_,aligns=elf_dynamic(p.read_bytes())
     if aligns and min(aligns)<0x4000: unaligned.append(rel.as_posix())
 print(f'Rewrote Termux RUNPATH to bundle-relative paths in {rewritten} ELF files')
+
+# Libraries without any RUNPATH (Mesa's libEGL/libGLESv2/libgallium, pulled in by
+# winegstreamer through libgstgl) cannot find their own bundled dependencies:
+# bionic does not search a dependent's RUNPATH for a library's NEEDED entries.
+# Adding a RUNPATH needs new room in the file, so this uses patchelf, keeping new
+# segments 16 KB aligned.
+import shutil as _shutil, subprocess as _subprocess
+bundled={p.name for p in (stage/'lib').iterdir() if p.is_file()}
+added=[]
+for p in sorted(stage.rglob('*')):
+    if not p.is_file() or p.read_bytes()[:4]!=b'\x7fELF': continue
+    info=_subprocess.run(['readelf','-dW',str(p)],capture_output=True,text=True).stdout
+    if 'RUNPATH' in info or 'RPATH' in info: continue
+    needed=re.findall(r'\(NEEDED\).*\[(.*?)\]',info)
+    if not any(n in bundled for n in needed): continue
+    patchelf=_shutil.which('patchelf')
+    if not patchelf: raise SystemExit(f'{p.relative_to(stage)} needs a RUNPATH: install patchelf')
+    rel=p.relative_to(stage).parts
+    runpath='$ORIGIN' if rel[:1]==('lib',) and len(rel)==2 else '$ORIGIN/../..' if rel[:3]==('lib','wine','aarch64-unix') else '$ORIGIN/../lib'
+    _subprocess.run([patchelf,'--page-size','16384','--set-rpath',runpath,str(p)],check=True)
+    added.append(p.relative_to(stage).as_posix())
+print('Added RUNPATH to',len(added),'libraries:',', '.join(added))
 # 16 KB page devices (Android 15+) cannot map 4 KB-aligned segments of these files.
+unaligned=[p.relative_to(stage).as_posix() for p in sorted(stage.rglob('*'))
+           if p.is_file() and p.read_bytes()[:4]==b'\x7fELF' and (lambda a: a and min(a)<0x4000)(elf_dynamic(p.read_bytes())[2])]
 for rel in unaligned:
     print(f'::warning::{rel} is not 16 KB page aligned; it will not load on 16 KB page devices')
 
