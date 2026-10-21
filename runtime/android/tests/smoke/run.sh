@@ -178,12 +178,14 @@ audio_step() { # name exe
   : > "$LOGS/aaudio-stats.txt"
   RESULT="$SMOKE/$2.txt" step "$1" 120 "${WINE[@]}" "$LOADER" "${DESKTOP[@]}" "C:\\smoke\\$2.exe"
   sleep 2
-  if ! awk '{for(i=1;i<=NF;i++){split($i,kv,"="); if(kv[1]=="frames")f+=kv[2]; if(kv[1]=="peak"&&kv[2]>p)p=kv[2]}} END{exit !(f>=24000 && p>=0.3)}' "$LOGS/aaudio-stats.txt"; then
+  # Progress lines come every 50 callbacks while AAudio pulls; enough frames and a loud
+  # enough peak mean the program's tone really arrived.
+  if ! awk '{for(i=1;i<=NF;i++){split($i,kv,"="); if(kv[1]=="frames"&&kv[2]>f)f=kv[2]; if(kv[1]=="peak"&&kv[2]>p)p=kv[2]}} END{exit !(f>=24000 && p>=0.3)}' "$LOGS/aaudio-stats.txt"; then
     echo "FAIL $1-reached-aaudio" >> "$LOGS/summary.txt"; failed=1
     { echo "AAudio side:"; cat "$LOGS/aaudio-stats.txt"; } > "$LOGS/$1-aaudio.txt"
     annotate error "$1: the tone did not reach AAudio" "$LOGS/$1-aaudio.txt"
   else
-    echo "PASS $1-reached-aaudio ($(tr '\n' ' ' < "$LOGS/aaudio-stats.txt"))" >> "$LOGS/summary.txt"
+    echo "PASS $1-reached-aaudio ($(grep -E '^(open format|close)' "$LOGS/aaudio-stats.txt" | tail -2 | tr '\n' ' '))" >> "$LOGS/summary.txt"
   fi
 }
 audio_step audio-x64 audio-x86_64

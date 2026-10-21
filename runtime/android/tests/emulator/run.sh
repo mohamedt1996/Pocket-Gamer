@@ -19,7 +19,11 @@ check() { # name ok? detail-file
   if [ "$2" = 0 ]; then echo "PASS $1" >> "$LOGS/summary.txt"
   else echo "FAIL $1" >> "$LOGS/summary.txt"; annotate error "emulator: $1" "$3"; failed=1; fi
 }
-crashes() { adb logcat -d -b crash,main 2>/dev/null | grep -E "FATAL EXCEPTION|ANR in $PKG|Process: $PKG|AndroidRuntime" -A 25 | head -150; }
+# This app's crashes (Android's crash buffer) and ANRs only, not other apps' log noise.
+crashes() {
+  adb logcat -d -b crash 2>/dev/null | grep -B 2 -A 30 "Process: $PKG\(:wine\)\?," | head -120
+  adb logcat -d -b main,system,events 2>/dev/null | grep -A 12 "ANR in $PKG" | head -40
+}
 
 adb wait-for-device
 adb shell getprop ro.build.version.release > "$LOGS/device.txt"

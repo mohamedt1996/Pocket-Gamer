@@ -35,6 +35,13 @@ struct builder {
     error_callback error; void *error_user;
 };
 
+static void note(const char *fmt, long a, long b, long c, double d)
+{
+    const char *path = getenv("FAKE_AAUDIO_STATS");
+    FILE *f = path ? fopen(path, "a") : 0;
+    if (f) { fprintf(f, fmt, a, b, c, d); fclose(f); }
+}
+
 struct stream {
     struct builder b;
     volatile int running;
@@ -60,6 +67,7 @@ static void *pump(void *arg)
             if (v > s->peak) s->peak = v;
         }
         s->frames += BURST; s->callbacks++;
+        if (s->callbacks % 50 == 0) note("progress frames=%ld callbacks=%ld rate=%ld peak=%.3f\n", s->frames, s->callbacks, s->b.rate, s->peak);
         nanosleep(&wait, 0);
     }
     free(buffer);
@@ -96,6 +104,8 @@ aaudio_result_t AAudioStreamBuilder_openStream(struct builder *b, struct stream 
     if (!s->b.format) s->b.format = FORMAT_FLOAT;
     if (!s->b.capacity) s->b.capacity = BURST * 16;
     s->buffer_size = BURST * 2;
+    note("open direction=%ld rate=%ld channels=%ld\n", s->b.direction, s->b.rate, s->b.channels, 0);
+    note("open format=%ld callback=%ld capacity=%ld\n", s->b.format, s->b.callback != 0, s->b.capacity, 0);
     *out = s;
     return 0;
 }
@@ -103,6 +113,7 @@ aaudio_result_t AAudioStream_requestStart(struct stream *s)
 {
     if (s->running) return 0;
     if (!s->b.callback) return -896; /* AAUDIO_ERROR_INVALID_STATE: blocking writes are not emulated */
+    note("start direction=%ld\n", s->b.direction, 0, 0, 0);
     s->running = 1;
     return pthread_create(&s->thread, 0, pump, s) ? -899 : 0;
 }
@@ -115,16 +126,8 @@ aaudio_result_t AAudioStream_requestStop(struct stream *s)
 }
 aaudio_result_t AAudioStream_close(struct stream *s)
 {
-    const char *path = getenv("FAKE_AAUDIO_STATS");
     AAudioStream_requestStop(s);
-    if (path && s->b.direction == 0) {   /* output streams */
-        FILE *f = fopen(path, "a");
-        if (f) {
-            fprintf(f, "stream rate=%d channels=%d format=%d frames=%ld callbacks=%ld peak=%.3f\n",
-                    s->b.rate, s->b.channels, s->b.format, s->frames, s->callbacks, s->peak);
-            fclose(f);
-        }
-    }
+    note("close direction=%ld frames=%ld callbacks=%ld peak=%.3f\n", s->b.direction, s->frames, s->callbacks, s->peak);
     free(s);
     return 0;
 }
