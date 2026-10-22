@@ -5,10 +5,10 @@ Subject: [PATCH] ntdll: Name the caller of a branch to a null address (ARM64EC)
 
 ---
 diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
-index 2a1333f..8df1454 100644
+index 2a1333f..67af48b 100644
 --- a/dlls/ntdll/signal_arm64ec.c
 +++ b/dlls/ntdll/signal_arm64ec.c
-@@ -3555,10 +3555,64 @@ static void dispatch_syscall( ARM64_NT_CONTEXT *context )
+@@ -3555,10 +3555,102 @@ static void dispatch_syscall( ARM64_NT_CONTEXT *context )
  }
  
  
@@ -23,6 +23,43 @@ index 2a1333f..8df1454 100644
 +        ERR( "  %s=%p\n", what, (void *)(ULONG_PTR)addr );
 +}
 +
++/* If lr follows a BL, decode the stub it called: every adrp+ldr pair names a
++ * pointer slot (IAT, auxiliary IAT, dispatcher) and the value it holds now. */
++static void android_dump_call_site( ULONG64 lr )
++{
++    const UINT32 *insn = (const UINT32 *)(ULONG_PTR)(lr - 4), *stub;
++    ULONG64 page[32] = { 0 };
++    MEMORY_BASIC_INFORMATION info;
++    char name[32];
++    int i, rd, rn;
++
++    if (lr < 0x10000 || NtQueryVirtualMemory( GetCurrentProcess(), insn, MemoryBasicInformation, &info,
++                                              sizeof(info), NULL ) || info.State != MEM_COMMIT) return;
++    if ((*insn & 0xfc000000) != 0x94000000) return;  /* not a BL */
++    stub = insn + (((INT32)(*insn << 6)) >> 6);
++    android_describe( "called", (ULONG_PTR)stub );
++    for (i = 0; i < 8; i++)
++    {
++        UINT32 op = stub[i];
++        if ((op & 0x9f000000) == 0x90000000)  /* adrp */
++        {
++            INT64 imm = ((INT64)(((op >> 5) & 0x7ffff) << 2 | ((op >> 29) & 3)) << 43) >> 31;
++            page[op & 31] = (((ULONG_PTR)&stub[i]) & ~(ULONG64)0xfff) + imm;
++        }
++        else if ((op & 0xffc00000) == 0xf9400000)  /* ldr Xt, [Xn, #imm] */
++        {
++            rd = op & 31; rn = (op >> 5) & 31;
++            if (!page[rn]) continue;
++            {
++                const ULONG64 *slot = (const ULONG64 *)(ULONG_PTR)(page[rn] + ((op >> 10) & 0xfff) * 8);
++                sprintf( name, "x%d <- [%p]", rd, slot );
++                android_describe( name, *slot );
++            }
++            page[rd] = 0;
++        }
++    }
++}
++
 +static void android_report_wild_branch( const ARM64_NT_CONTEXT *ctx )
 +{
 +    const ULONG64 *fp = (const ULONG64 *)(ULONG_PTR)ctx->Fp;
@@ -35,6 +72,7 @@ index 2a1333f..8df1454 100644
 +         __os_arm64x_dispatch_call_no_redirect, __os_arm64x_dispatch_fptr, __os_arm64x_dispatch_ret,
 +         pBeginSimulation );
 +    android_describe( "lr", ctx->Lr );
++    android_dump_call_site( ctx->Lr );
 +    android_describe( "x16", ctx->X16 );
 +    android_describe( "x17", ctx->X17 );
 +    android_describe( "x9", ctx->X9 );
