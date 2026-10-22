@@ -156,6 +156,27 @@ for k, v in got.items():
     shutil.copyfile(v, out / ('linker64' if k.endswith('linker64') else 'lib64/' + Path(k).name))
 for k, v in found.items():
     if k.endswith('.so'): shutil.copyfile(v, out / 'lib64' / Path(k).name)
+
+# Everything those libraries need (and libnetd_client.so, which libc dlopens for DNS), from
+# the system partition's lib64, until nothing is missing.
+def needed(path):
+    r = subprocess.run(['readelf', '-dW', str(path)], capture_output=True, text=True).stdout
+    return re.findall(r'\(NEEDED\).*\[(.*?)\]', r)
+have = {p.name for p in (out / 'lib64').iterdir()} | {'ld-android.so'}
+pending = {'libnetd_client.so'}
+for p in (out / 'lib64').iterdir(): pending |= set(needed(p))
+for _ in range(8):
+    pending -= have
+    if not pending: break
+    paths = [f'/system/lib64/{n}' for n in sorted(pending)] + [f'/lib64/{n}' for n in sorted(pending)]
+    more = extract_fs(system, paths, work)
+    nxt = set()
+    for k, v in more.items():
+        name = Path(k).name
+        if name in have: continue
+        shutil.copyfile(v, out / 'lib64' / name); have.add(name); nxt |= set(needed(v))
+    log('dependencies added:', sorted(Path(k).name for k in more), 'still missing:', sorted(pending - have))
+    pending = nxt
 os.chmod(out / 'linker64', 0o755)
 (out / 'VERSION').write_text(f'android-{api} {url}\n')
 log('done:', sorted(str(p.relative_to(out)) for p in out.rglob('*') if p.is_file()))
