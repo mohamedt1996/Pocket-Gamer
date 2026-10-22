@@ -187,7 +187,7 @@ echo '/tmp/cores/core.%p' | sudo tee /proc/sys/kernel/core_pattern > /dev/null
 for b in x86_64:x64 i686:x86; do
   if grep -q "^FAIL cli-${b#*:} " "$LOGS/summary.txt"; then
     rm -f /tmp/cores/core.*
-    step "cli-${b#*:}-direct" 120 "${WINE[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,warn+seh" \
+    step "cli-${b#*:}-direct" 120 "${WINE[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,warn+seh,+winsock" \
       "$LOADER" "C:\\smoke\\cli-${b%:*}.exe" || true
     for c in /tmp/cores/core.*; do
       [ -f "$c" ] || continue
