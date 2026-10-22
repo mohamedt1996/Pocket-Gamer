@@ -40,7 +40,23 @@ cp -f $OUT/bionic/lib64/*.so /system/lib64/
   W=\$(ls -d /data/data/org.pocketarcade.madeira 2>/dev/null); echo "app dir: \$W"; } > $OUT/env.txt 2>&1
 echo "::notice title=16K VM environment::\$(sed ':a;N;\$!ba;s/\n/%0A/g' $OUT/env.txt)"
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin STACK_SYMBOLS="${STACK_SYMBOLS:-}" SMOKE_TIME_SCALE="${SMOKE_TIME_SCALE:-1}"
-cd "$REPO" && bash runtime/android/tests/smoke/run.sh "$APK" "$TESTS" $OUT/logs
+cd "$REPO"
+# First a bare wineboot with core capture: when Wine cannot start on 16 KB pages, say where.
+RT=/data/data/org.pocketarcade.madeira/files/madeira-runtime-v2; P=/tmp/probe-prefix
+mkdir -p "\$RT" /tmp/cores && unzip -q -o "$APK" assets/madeira-runtime.zip -d /tmp/apk && unzip -q -o /tmp/apk/assets/madeira-runtime.zip -d "\$RT" && chmod -R u+x "\$RT"
+echo '/tmp/cores/core.%p' > /proc/sys/kernel/core_pattern; ulimit -c unlimited
+L="\$RT/lib/wine/aarch64-unix/wine"
+env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin \
+  WINEDEBUG=+timestamp,+pid,+seh,+virtual,warn+module timeout 300 "\$L" wineboot --init > $OUT/probe.out 2> $OUT/probe.log
+rc=\$?
+{ echo "wineboot exit \$rc"; grep -v '^linker\|WARNING: linker' $OUT/probe.log | grep -E 'err:|virtual|seh|wine:' | tail -40; } > $OUT/probe.txt
+for c in /tmp/cores/core.*; do [ -f "\$c" ] || continue
+  python3 runtime/android/tests/smoke/core.py "\$(readlink -f /proc/1/root\$L 2>/dev/null || echo \$L)" "\$c" > $OUT/probe-core.txt 2>&1; break; done
+echo "::\$([ \$rc = 0 ] && echo notice || echo error) title=16K VM wineboot::\$(head -c 3500 $OUT/probe.txt | sed ':a;N;\$!ba;s/\n/%0A/g')"
+[ -s $OUT/probe-core.txt ] && echo "::error title=16K VM wineboot core::\$(head -c 3800 $OUT/probe-core.txt | sed ':a;N;\$!ba;s/\n/%0A/g')"
+rm -rf "\$RT" /tmp/apk "\$P"
+[ \$rc = 0 ] || exit 1
+bash runtime/android/tests/smoke/run.sh "$APK" "$TESTS" $OUT/logs
 INNER
 
 if [ -w /dev/kvm ] || sudo test -c /dev/kvm; then ACCEL=(-accel kvm -cpu host); echo "using KVM"; else ACCEL=(-accel tcg,thread=multi -cpu max,pauth=off); echo "using TCG (no KVM)"; fi
