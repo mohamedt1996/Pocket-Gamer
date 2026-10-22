@@ -1688,6 +1688,10 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 200
     continue-on-error: true
+    permissions:
+      contents: read
+      actions: read
+      checks: write
     strategy:
       fail-fast: false
       matrix:
@@ -1720,6 +1724,14 @@ jobs:
       env:
         SMOKE_TIME_SCALE: "8"
       run: bash runtime/android/tests/pagesize/run-vm.sh apk/*.apk tests-bin logs
+    - name: Publish the VM's trace logs as check runs
+      if: always()
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        bash runtime/android/tests/pagesize/publish-logs.sh "16K ${{ matrix.wine }}" \
+          /vmout/probe.log /vmout/probe2.log /vmout/cli-i686.log /vmout/cli-x86_64.log \
+          /vmout/logs/cli-x86-seh.log /vmout/logs/cli-x64-seh.log
     - uses: actions/upload-artifact@v4
       if: always()
       with:

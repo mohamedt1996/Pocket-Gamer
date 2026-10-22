@@ -67,10 +67,10 @@ else
   # Wine starts: how the first 32- and 64-bit x86 programs map and where they stop.
   for exe in cli-i686 cli-x86_64; do
     timeout 900 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin \
-      WINEDEBUG=+pid,+module,+loaddll,err+all "\$L" "$TESTS/\$exe.exe" > $OUT/\$exe.out 2> $OUT/\$exe.log
+      WINEDEBUG=+pid,+module,+loaddll,warn+seh,err+all "\$L" "$TESTS/\$exe.exe" > $OUT/\$exe.out 2> $OUT/\$exe.log
     r=\$?
     { echo "\$exe exit \$r"; head -c 400 $OUT/\$exe.out; echo
-      grep -v '^linker\|WARNING: linker' $OUT/\$exe.log | grep -E 'syswow64.*ntdll|cli-|wow-init|REFUSING|Unhandled|c0000005|callret|host page' | head -45; } > $OUT/\$exe.txt
+      grep -v '^linker\|WARNING: linker' $OUT/\$exe.log | grep -E 'syswow64.*ntdll|wow-init|REFUSING|Unhandled|c0000005|callret' | head -45; } > $OUT/\$exe.txt
     echo "::notice title=16K VM \$exe::\$(head -c 3800 $OUT/\$exe.txt | sed ':a;N;\$!ba;s/\n/%0A/g')"
   done
 fi
