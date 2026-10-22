@@ -33,7 +33,8 @@ def replace(path, old, new):
 # return: every process Wine starts (wineboot, explorer, the game) died with SIGSEGV. Its
 # text address (0x7d400000) is already 16 KB aligned; only the segment alignment was missing.
 # The preloader reads the real page size from AT_PAGESZ, so nothing else depends on it.
-for script in ('configure.ac', 'configure'):   # builds may regenerate configure
+for script in ('configure.ac', 'configure'):   # configure: only when the tree ships one
+    if not (root / script).exists(): continue
     replace(script,
             'WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"',
             'WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000 -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"')

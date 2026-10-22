@@ -134,14 +134,44 @@ They are kept as they are, with Android changes as patches
   (patch 0001). Madeira's iOS-only unix calls get Android entries (0011).
 
 The `android_emulator_test` job runs the app itself (without the runtime) on
-Android 11 and 14 emulator images with ARM64 translation: install, start, first
-screen, 400 random taps/swipes/back presses, and a restart after Android kills
-the process, failing on any crash or ANR.
+Android 11, 14, 15 and 16 emulator images with ARM64 translation: install,
+start, first screen, the GPU check, 400 random taps/swipes/back presses, and a
+restart after Android kills the process, failing on any crash or ANR.
+
+### The phone's GPU
+
+Games always draw on the phone's own GPU: DXVK / VKD3D-Proton / Wine's
+Direct3D → Wine's Vulkan → Android's `libvulkan.so` → the Adreno or Mali
+driver. (lavapipe is only CI's stand-in.)
+
+Current DXVK and VKD3D-Proton need more than many phone drivers offer (Vulkan
+1.3 plus BC textures, 64-bit shader integers, maintenance5/6, robustness2,
+and for Direct3D 12 transform feedback and push descriptors; Mali GPUs have no
+BC textures at all). So the app asks the driver at start (`gpu_caps.c`,
+checking the requirements written in the pinned DXVK and VKD3D-Proton
+sources), shows the result under Settings › GPU, and **Auto** graphics steps
+down instead of failing: VKD3D-Proton → DXVK with Wine's own Direct3D 12 →
+Wine's own Direct3D on its Vulkan renderer (which decodes BC textures itself).
+Wine's own Direct3D now uses that Vulkan renderer everywhere; its default,
+desktop OpenGL, does not exist on Android, so before this the "Wine" path could
+not draw. On the Android 15/16 emulators the check correctly reports that
+SwiftShader cannot run DXVK. (WineD3D itself cannot be exercised by the
+headless runtime test: its DXGI needs a display output that Wine's null driver
+does not have.)
+
+### 16 KB page devices (Android 15+)
+
+`android_pagesize_test` boots Debian's arm64-16k kernel in QEMU on the CI
+runner, swaps Android 9's bionic for Android 15's page-size-agnostic linker
+and libc (taken from Google's arm64 emulator image), and runs the runtime
+test. It found that every process Wine starts died at exec: the static
+`wine-preloader` had 4 KB-aligned segments. Both Wine builds now link it
+16 KB aligned, and packaging fails if any runtime ELF is not 16 KB aligned.
 
 **Not covered:** Wine's window, input and presentation on a real Android surface
 (`wineandroid.drv` needs the app's Java side, and Wine cannot run inside the
-emulator's ARM translation), a real GPU driver, a real speaker, and actual games.
-Those still need a physical-device run.
+emulator's ARM translation), a real phone's GPU driver, a real speaker, and
+actual games. Those still need a physical-device run.
 
 ## Important unresolved integration risks
 
