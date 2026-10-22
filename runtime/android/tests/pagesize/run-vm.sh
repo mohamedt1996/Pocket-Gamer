@@ -58,11 +58,21 @@ if [ \$rc != 0 ]; then
   # Where the first DLL load fails: module and mapping traces of a fresh start.
   rm -rf "\$P"
   timeout 900 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin \
-    WINEDEBUG=+module,+virtual,+loaddll "\$L" wineboot --init > /dev/null 2> $OUT/probe2.log
-  grep -n 'kernel32' $OUT/probe2.log | head -3 > $OUT/probe2.txt
+    WINEDEBUG=+module,+loaddll,+file "\$L" wineboot --init > /dev/null 2> $OUT/probe2.log
+  { ls -la "\$RT/lib/wine/" "\$RT"/lib/wine/*-windows/kernel32.dll 2>&1 | head -20; grep -n 'kernel32' $OUT/probe2.log | head -40; } > $OUT/probe2.txt
   l=\$(grep -n 'kernel32' $OUT/probe2.log | head -1 | cut -d: -f1)
-  [ -n "\$l" ] && sed -n "\$((l > 30 ? l - 30 : 1)),\$((l + 25))p" $OUT/probe2.log | grep -v '^linker\|WARNING: linker' >> $OUT/probe2.txt
+  [ -n "\$l" ] && sed -n "\$((l > 15 ? l - 15 : 1)),\$((l + 5))p" $OUT/probe2.log | grep -v '^linker\|WARNING: linker' >> $OUT/probe2.txt
   echo "::error title=16K VM first failing load::\$(head -c 3800 $OUT/probe2.txt | sed ':a;N;\$!ba;s/\n/%0A/g')"
+else
+  # Wine starts: how the first 32- and 64-bit x86 programs map and where they stop.
+  for exe in cli-i686 cli-x86_64; do
+    timeout 900 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin \
+      WINEDEBUG=+pid,+module,+loaddll,err+all "\$L" "$TESTS/\$exe.exe" > $OUT/\$exe.out 2> $OUT/\$exe.log
+    r=\$?
+    { echo "\$exe exit \$r"; head -c 400 $OUT/\$exe.out; echo
+      grep -v '^linker\|WARNING: linker' $OUT/\$exe.log | grep -E 'syswow64.*ntdll|cli-|wow-init|REFUSING|Unhandled|c0000005|callret|host page' | head -45; } > $OUT/\$exe.txt
+    echo "::notice title=16K VM \$exe::\$(head -c 3800 $OUT/\$exe.txt | sed ':a;N;\$!ba;s/\n/%0A/g')"
+  done
 fi
 rm -rf "\$RT" /tmp/apk "\$P"
 [ \$rc = 0 ] || exit 1
