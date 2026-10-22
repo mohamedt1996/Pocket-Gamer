@@ -23,8 +23,11 @@ text = open(path, errors='replace').read()[:65000]
 print(json.dumps({"name": name, "head_sha": os.environ["GITHUB_SHA"], "status": "completed",
                   "conclusion": "neutral", "output": {"title": name, "summary": "trace log", "text": text}}))
 PY
-  gh api -X POST "repos/$GITHUB_REPOSITORY/check-runs" --input "$body.json" > "$body.out" 2>&1 ||
+  if gh api -X POST "repos/$GITHUB_REPOSITORY/check-runs" --input "$body.json" > "$body.out" 2>&1; then
+    echo "::notice title=16K log::$f -> check run $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("id"), d.get("head_sha"))' "$body.out" 2>&1 | head -c 300)"
+  else
     echo "::warning title=16K log::could not publish $f: $(head -c 600 "$body.out" | tr '\n' ' ')"
+  fi
   rm -f "$body.out"
   rm -f "$body" "$body.all" "$body.md" "$body.json"
 done
