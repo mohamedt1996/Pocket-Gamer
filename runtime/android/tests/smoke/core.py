@@ -76,3 +76,20 @@ for depth in range(12):
     fp = nxt
 print('frames of the crashing thread:'); print('\n'.join(chain))
 print(gdb('x/10i $pc-20'))
+
+# Died inside Wine's own exception setup (a fault it could not deliver): the
+# CONTEXT it was building holds the original fault. Find it among the
+# callee-saved registers by its ContextFlags (CONTEXT_ARM64 = 0x400000).
+regs = gdb('info registers ' + ' '.join(f'x{i}' for i in range(19, 29)))
+for name, val in re.findall(r'^(x\d+)\s+(0x[0-9a-f]+)', regs, re.M):
+    out = gdb(f'x/34gx {val}')
+    words = [int(w, 16) for w in re.findall(r'0x[0-9a-f]{16}', '\n'.join(l.split(':', 1)[-1] for l in out.splitlines()))]
+    if len(words) < 34 or (words[0] & 0xffffffff) & 0xfff00000 != 0x00400000: continue
+    x = words[1:30]   # X0..X28
+    fp_, lr, sp, pc = words[30], words[31], words[32], words[33]
+    print(f'original fault (CONTEXT at {name}={val}):')
+    print('  pc', describe(pc), '| lr', describe(lr))
+    print(f'  sp={sp:#x} fp={fp_:#x} x0={x[0]:#x} x1={x[1]:#x} x2={x[2]:#x} x3={x[3]:#x} x8={x[8]:#x}'
+          f' x16={x[16]:#x} x17={x[17]:#x} x18={x[18]:#x} x28={x[28]:#x}')
+    print(gdb(f'x/10i {pc - 20:#x}'))
+    break
