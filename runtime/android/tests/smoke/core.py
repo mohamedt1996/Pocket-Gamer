@@ -81,9 +81,11 @@ print(gdb('x/10i $pc-20'))
 # CONTEXT it was building holds the original fault. Find it among the
 # callee-saved registers by its ContextFlags (CONTEXT_ARM64 = 0x400000).
 regs = gdb('info registers ' + ' '.join(f'x{i}' for i in range(19, 29)))
+tried = []
 for name, val in re.findall(r'^(x\d+)\s+(0x[0-9a-f]+)', regs, re.M):
     out = gdb(f'x/34gx {val}')
-    words = [int(w, 16) for w in re.findall(r'0x[0-9a-f]{16}', '\n'.join(l.split(':', 1)[-1] for l in out.splitlines()))]
+    words = [int(w, 16) for w in re.findall(r'0x[0-9a-f]+', '\n'.join(l.split(':', 1)[-1] for l in out.splitlines() if ':' in l))]
+    tried.append(f'{name}={val}:{words[0]:#x}' if words else f'{name}={val}:-')
     if len(words) < 34 or (words[0] & 0xffffffff) & 0xfff00000 != 0x00400000: continue
     x = words[1:30]   # X0..X28
     fp_, lr, sp, pc = words[30], words[31], words[32], words[33]
@@ -93,3 +95,5 @@ for name, val in re.findall(r'^(x\d+)\s+(0x[0-9a-f]+)', regs, re.M):
           f' x16={x[16]:#x} x17={x[17]:#x} x18={x[18]:#x} x28={x[28]:#x}')
     print(gdb(f'x/10i {pc - 20:#x}'))
     break
+else:
+    print('no CONTEXT among', ' '.join(tried))
