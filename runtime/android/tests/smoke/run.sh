@@ -35,7 +35,7 @@ annotate() { # level title file
   echo "::$1 title=$2::$body"
 }
 step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> NAME.log
-  local name=$1 limit=$2; shift 2
+  local name=$1 limit=$(( $2 * ${SMOKE_TIME_SCALE:-1} )); shift 2   # slower hosts (emulated VM) scale the limits
   local out="$LOGS/$name.out" log="$LOGS/$name.log" sum="$LOGS/$name.summary" start=$SECONDS
   echo "== $name: $*"
   [ -n "${RESULT:-}" ] && rm -f "$RESULT"   # a program run twice must not pass on the old file

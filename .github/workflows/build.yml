@@ -1681,6 +1681,51 @@ jobs:
           .android-out/bundle/share/licenses
         if-no-files-found: error
         include-hidden-files: true
+  android_pagesize_test:
+    name: "Android runtime on a 16 KB page kernel \u2022 ${{ matrix.wine }}"
+    needs: [android_port, android_port_madeira]
+    if: always() && needs.android_port.result == 'success'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 200
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - wine: proton
+          artifact: Madeira-Android-runtime-lab-debug
+        - wine: madeira
+          artifact: MadeiraWine-Android-runtime-lab-debug
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      with:
+        name: ${{ matrix.artifact }}
+        path: apk
+    - name: Install Android userspace (bionic, Vulkan loader, lavapipe)
+      run: bash runtime/android/tests/smoke/setup.sh logs/setup
+    - name: Install QEMU
+      run: sudo apt-get install -y -qq qemu-system-arm busybox-static cpio android-sdk-libsparse-utils erofs-utils e2fsprogs kmod zstd
+    - name: Build test programs
+      run: |
+        mkdir -p tests-bin
+        for t in x86_64 i686; do
+          $t-w64-mingw32-gcc -O2 -o tests-bin/cli-$t.exe runtime/android/tests/smoke/cli.c -lws2_32
+          $t-w64-mingw32-gcc -O2 -o tests-bin/devices-$t.exe runtime/android/tests/smoke/devices.c -ld3d11 -ld3d12 -ldxgi
+          $t-w64-mingw32-gcc -O2 -idirafter /usr/include -o tests-bin/vk-$t.exe runtime/android/tests/smoke/vk.c
+          $t-w64-mingw32-gcc -O2 -o tests-bin/audio-$t.exe runtime/android/tests/smoke/audio.c -lole32 -luuid -lm
+        done
+    - name: Run the runtime in a 16 KB page VM
+      timeout-minutes: 180
+      env:
+        SMOKE_TIME_SCALE: "8"
+      run: bash runtime/android/tests/pagesize/run-vm.sh apk/*.apk tests-bin logs
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: Android-pagesize-test-${{ matrix.wine }}
+        path: logs
+
   android_emulator_test:
     # The app itself (no Windows runtime) on real Android: x86_64 emulator images
     # with ARM64 translation. Install, start, first screen, random use, process
@@ -1693,7 +1738,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [30, 34]
+        api: [30, 34, 35, 36]
     steps:
     - uses: actions/checkout@v4
     - uses: actions/download-artifact@v4

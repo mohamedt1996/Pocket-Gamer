@@ -1,0 +1,20 @@
+#!/bin/busybox sh
+# PID 1 of the 16 KB page VM: load the modules, mount the runner's own root
+# (9p, read-only) under a RAM overlay, and run the test inside it.
+/bin/busybox --install -s /bin
+mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev
+for m in $(cat /modules.order); do insmod "/modules/$m" 2>/dev/null; done
+echo "vm: kernel $(uname -r), page size $(getconf PAGESIZE 2>/dev/null || echo ?)"
+mkdir -p /host /rw /newroot
+mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576,ro,cache=loose hostroot /host || { echo "vm: 9p root failed"; poweroff -f; }
+mount -t tmpfs -o size=7g tmpfs /rw && mkdir -p /rw/upper /rw/work
+if ! mount -t overlay overlay -o lowerdir=/host,upperdir=/rw/upper,workdir=/rw/work /newroot; then
+  echo "vm: overlay failed"; poweroff -f
+fi
+mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576 vmout /newroot/vmout || echo "vm: output share failed"
+mount -t proc proc /newroot/proc; mount -t sysfs sys /newroot/sys
+mount -t devtmpfs dev /newroot/dev; mkdir -p /newroot/dev/pts; mount -t devpts devpts /newroot/dev/pts
+mount -t tmpfs tmpfs /newroot/tmp; mount -t tmpfs tmpfs /newroot/run
+chroot /newroot /bin/bash /vmout/inner.sh
+echo $? > /newroot/vmout/rc
+sync; poweroff -f
