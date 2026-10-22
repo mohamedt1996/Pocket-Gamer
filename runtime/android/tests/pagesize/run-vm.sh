@@ -49,7 +49,7 @@ mkdir -p "\$RT" /tmp/cores && unzip -q -o "$APK" assets/madeira-runtime.zip -d /
 echo '/tmp/cores/core.%p' > /proc/sys/kernel/core_pattern; ulimit -c unlimited
 bash runtime/android/tests/smoke/prefix.sh "\$P"   # as the app writes it before the first start
 L="\$RT/lib/wine/aarch64-unix/wine"
-timeout 1200 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin \
+timeout 1200 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin WINEDLLOVERRIDES=mscoree,mshtml=d \
   WINEDEBUG=+timestamp,+pid,warn+seh,warn+module,err+all "\$L" wineboot --init > $OUT/probe.out 2> $OUT/probe.log
 rc=\$?
 { echo "wineboot exit \$rc"; grep -v '^linker\|WARNING: linker\|^D \|^I \|iOS-x' $OUT/probe.log | grep -E 'err:|warn:seh|wine:|exception' | tail -30; echo "--- end of log"; grep -v '^linker\|WARNING: linker' $OUT/probe.log | tail -8; } > $OUT/probe.txt
@@ -60,21 +60,24 @@ echo "::\$([ \$rc = 0 ] && echo notice || echo error) title=16K VM wineboot::\$(
 if [ \$rc != 0 ]; then
   # Where the first DLL load fails: module and mapping traces of a fresh start.
   rm -rf "\$P"; bash runtime/android/tests/smoke/prefix.sh "\$P"
-  timeout 900 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin \
+  timeout 900 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin WINEDLLOVERRIDES=mscoree,mshtml=d \
     WINEDEBUG=+module,+loaddll,+file "\$L" wineboot --init > /dev/null 2> $OUT/probe2.log
   { ls -la "\$RT/lib/wine/" "\$RT"/lib/wine/*-windows/kernel32.dll 2>&1 | head -20; grep -n 'kernel32' $OUT/probe2.log | head -40; } > $OUT/probe2.txt
   l=\$(grep -n 'kernel32' $OUT/probe2.log | head -1 | cut -d: -f1)
   [ -n "\$l" ] && sed -n "\$((l > 15 ? l - 15 : 1)),\$((l + 5))p" $OUT/probe2.log | grep -v '^linker\|WARNING: linker' >> $OUT/probe2.txt
   echo "::error title=16K VM first failing load::\$(head -c 3800 $OUT/probe2.txt | sed ':a;N;\$!ba;s/\n/%0A/g')"
 fi
+# The probe's wineserver must be gone: a new prefix on the same tmpfs can get the deleted
+# one's inode, and with it the stale server.
+env -i WINEPREFIX=\$P PATH=\$RT/bin:/system/bin "\$RT/bin/wineserver" -k 2>/dev/null; sleep 2
 rm -rf "\$RT" /tmp/apk "\$P"
 [ \$rc = 0 ] || exit 1
 bash runtime/android/tests/smoke/run.sh "$APK" "$TESTS" $OUT/logs
 INNER
 
 # The CPU: VM_CPU names a QEMU model of a real core (the CI uses Neoverse-N1). x86
-# programs under FEX fail on TCG's ARMv9 models (Cortex-A710, and "max" even with
-# 128-bit SVE) on 4 KB and 16 KB kernels and with either bionic alike, while the same
+# programs under FEX fail on TCG's ARMv9 models (Cortex-A710 with or without SVE, and
+# "max") on 4 KB and 16 KB kernels and with either bionic alike, while the same
 # build passes natively on the ARMv9 runner (Neoverse-N2): an emulation problem, not
 # one of the runtime. Without VM_CPU: "max" with phone-sized (128-bit) SVE.
 TCG_CPU=max,pauth=off,sve-max-vq=1,sme=off

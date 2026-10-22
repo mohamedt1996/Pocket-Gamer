@@ -1706,13 +1706,6 @@ jobs:
           page: 16 KB
           kernel: arm64-16k
           cpu: neoverse-n1
-        # Diagnostic: an ARMv9 core model without SVE. FEX's x86 programs fail on
-        # TCG's ARMv9 models (see run-vm.sh); this tells whether SVE emulation is why.
-        - wine: madeira
-          artifact: MadeiraWine-Android-runtime-lab-debug
-          page: 16 KB
-          kernel: arm64-16k
-          cpu: cortex-a710,sve=off
     steps:
     - uses: actions/checkout@v4
     - uses: actions/download-artifact@v4
@@ -1809,32 +1802,8 @@ jobs:
         include:
         - wine: proton
           artifact: Madeira-Android-runtime-lab-debug
-          page: 16 KB
-          kernel: arm64-16k
-          cpu: cortex-a710
         - wine: madeira
           artifact: MadeiraWine-Android-runtime-lab-debug
-          page: 16 KB
-          kernel: arm64-16k
-          cpu: cortex-a710
-        # Controls: an ARMv8.2 core, and Debian's 4 KB kernel, so a failure above can
-        # be told apart from one the emulated CPU or the VM itself causes.
-        - wine: madeira
-          artifact: MadeiraWine-Android-runtime-lab-debug
-          page: 16 KB
-          kernel: arm64-16k
-          cpu: neoverse-n1
-        - wine: madeira
-          artifact: MadeiraWine-Android-runtime-lab-debug
-          page: 4 KB
-          kernel: arm64
-          cpu: cortex-a710
-        - wine: madeira
-          artifact: MadeiraWine-Android-runtime-lab-debug
-          page: 4 KB
-          kernel: arm64
-          cpu: cortex-a710
-          bionic: termux
     steps:
     - uses: actions/checkout@v4
     - uses: actions/download-artifact@v4
