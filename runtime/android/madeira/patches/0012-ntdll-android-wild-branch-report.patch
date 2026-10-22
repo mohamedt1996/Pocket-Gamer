@@ -5,10 +5,10 @@ Subject: [PATCH] ntdll: Name the caller of a branch to a null address (ARM64EC)
 
 ---
 diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
-index 2a1333f..67af48b 100644
+index 2a1333f..bf196ab 100644
 --- a/dlls/ntdll/signal_arm64ec.c
 +++ b/dlls/ntdll/signal_arm64ec.c
-@@ -3555,10 +3555,102 @@ static void dispatch_syscall( ARM64_NT_CONTEXT *context )
+@@ -3555,10 +3555,120 @@ static void dispatch_syscall( ARM64_NT_CONTEXT *context )
  }
  
  
@@ -23,6 +23,9 @@ index 2a1333f..67af48b 100644
 +        ERR( "  %s=%p\n", what, (void *)(ULONG_PTR)addr );
 +}
 +
++static void arm64x_check_call_early(void);
++static void arm64x_check_icall_early(void);
++
 +/* If lr follows a BL, decode the stub it called: every adrp+ldr pair names a
 + * pointer slot (IAT, auxiliary IAT, dispatcher) and the value it holds now. */
 +static void android_dump_call_site( ULONG64 lr )
@@ -35,6 +38,21 @@ index 2a1333f..67af48b 100644
 +
 +    if (lr < 0x10000 || NtQueryVirtualMemory( GetCurrentProcess(), insn, MemoryBasicInformation, &info,
 +                                              sizeof(info), NULL ) || info.State != MEM_COMMIT) return;
++    {
++        LDR_DATA_TABLE_ENTRY *mod;
++        const IMAGE_ARM64EC_METADATA *md;
++        if (!LdrFindEntryForAddress( (void *)(ULONG_PTR)lr, &mod ) &&
++            (md = arm64ec_get_module_metadata( mod->DllBase )))
++        {
++            char *b = mod->DllBase;
++            ERR( "  caller's dispatch slots: call=%p icall=%p call_no_redirect=%p fptr=%p ret=%p"
++                 " (check_call=%p early=%p/%p)\n",
++                 *(void **)(b + md->__os_arm64x_dispatch_call), *(void **)(b + md->__os_arm64x_dispatch_icall),
++                 *(void **)(b + md->__os_arm64x_dispatch_call_no_redirect),
++                 *(void **)(b + md->__os_arm64x_dispatch_fptr), *(void **)(b + md->__os_arm64x_dispatch_ret),
++                 arm64x_check_call, arm64x_check_call_early, arm64x_check_icall_early );
++        }
++    }
 +    if ((*insn & 0xfc000000) != 0x94000000) return;  /* not a BL */
 +    stub = insn + (((INT32)(*insn << 6)) >> 6);
 +    android_describe( "called", (ULONG_PTR)stub );
@@ -52,7 +70,7 @@ index 2a1333f..67af48b 100644
 +            if (!page[rn]) continue;
 +            {
 +                const ULONG64 *slot = (const ULONG64 *)(ULONG_PTR)(page[rn] + ((op >> 10) & 0xfff) * 8);
-+                sprintf( name, "x%d <- [%p]", rd, slot );
++                sprintf( name, "x%d <- [%p] ec=%d", rd, slot, *slot >= 0x10000 ? RtlIsEcCode( *slot ) : -1 );
 +                android_describe( name, *slot );
 +            }
 +            page[rd] = 0;

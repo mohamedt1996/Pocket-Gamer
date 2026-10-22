@@ -72,7 +72,7 @@ step() { # name timeout command...   stdout -> NAME.out, stderr (Wine's log) -> 
     if [ -n "${RESULT:-}" ]; then cat "$RESULT" 2>/dev/null || echo "(no result file)"; else cat "$out"; fi
     # First, since annotations keep only the start of a long message.
     [ $rc -eq 124 ] && { echo "--- hung: busy threads and stacks ---"; grep -v 'anon_pipe_read\|ep_poll\|hrtimer_nanosleep\|skb_wait\|poll_schedule\|do_sys_poll' "$LOGS/$name.hang"; }
-    [ $done_ -eq 2 ] && { echo "--- program exited without a result: end of its log ---"; grep -v 'trace:\|fixme:\|^info:\|autostart' "$log" | tail -n 25; }
+    { [ $done_ -eq 2 ] || [[ $name == *-direct ]]; } && { echo "--- program exited without a result: end of its log ---"; grep -v 'trace:\|fixme:\|^info:\|autostart' "$log" | tail -n 25; }
     echo "--- log (errors) ---"
     grep -E 'err:|wine:|DXVK|DXGI|D3D11|vkd3d|Vulkan|vulkan|info:  |warn:  |err:  |Fontconfig|not found|failed|Failed' "$log" \
       | grep -vE 'trace:seh|fixme:|_r_debug|autostart|egl_init|LdrGetProcedureAddress' | tail -n 30
@@ -178,6 +178,14 @@ LOADER="$RT/lib/wine/aarch64-unix/wine"
 DESKTOP=(explorer.exe /desktop=shell,,null)
 RESULT="$SMOKE/cli-x86_64.txt" step cli-x64 600 "${WINE[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\cli-x86_64.exe'
 RESULT="$SMOKE/cli-i686.txt" step cli-x86 600 "${WINE[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\cli-i686.exe'
+# A program that ends without a result: run it directly (no desktop launcher) to get its
+# exit status and Wine's exception messages.
+for b in x86_64:x64 i686:x86; do
+  if grep -q "^FAIL cli-${b#*:} " "$LOGS/summary.txt"; then
+    step "cli-${b#*:}-direct" 120 "${WINE[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,warn+seh" \
+      "$LOADER" "C:\\smoke\\cli-${b%:*}.exe" || true
+  fi
+done
 
 # Graphics devices: DXVK and VKD3D installed into the prefix as WineLaunch does,
 # with lavapipe behind Android's libvulkan.so name.
