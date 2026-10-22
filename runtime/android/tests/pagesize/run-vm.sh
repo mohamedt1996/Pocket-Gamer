@@ -46,8 +46,8 @@ RT=/data/data/org.pocketarcade.madeira/files/madeira-runtime-v2; P=/tmp/probe-pr
 mkdir -p "\$RT" /tmp/cores && unzip -q -o "$APK" assets/madeira-runtime.zip -d /tmp/apk && unzip -q -o /tmp/apk/assets/madeira-runtime.zip -d "\$RT" && chmod -R u+x "\$RT"
 echo '/tmp/cores/core.%p' > /proc/sys/kernel/core_pattern; ulimit -c unlimited
 L="\$RT/lib/wine/aarch64-unix/wine"
-env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin \
-  WINEDEBUG=+timestamp,+pid,+seh,+virtual,warn+module timeout 300 "\$L" wineboot --init > $OUT/probe.out 2> $OUT/probe.log
+timeout 300 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin \
+  WINEDEBUG=+timestamp,+pid,+seh,+virtual,warn+module "\$L" wineboot --init > $OUT/probe.out 2> $OUT/probe.log
 rc=\$?
 { echo "wineboot exit \$rc"; grep -v '^linker\|WARNING: linker' $OUT/probe.log | grep -E 'err:|virtual|seh|wine:' | tail -40; } > $OUT/probe.txt
 for c in /tmp/cores/core.*; do [ -f "\$c" ] || continue
