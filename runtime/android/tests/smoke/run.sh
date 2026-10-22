@@ -242,14 +242,8 @@ RESULT="$SMOKE/vk-x86_64.txt" step vk-x64 90 "${WINE[@]}" "${GFX[@]}" WINEDEBUG=
 RESULT="$SMOKE/vk-x86_64.txt" step vk-x64-standalone 90 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\vk-x86_64.exe'
 RESULT="$SMOKE/devices-i686.txt" step d3d11-x86 120 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d11
 RESULT="$SMOKE/devices-x86_64.txt" step d3d11-x64 120 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d11
-# Wine's own Direct3D on its Vulkan renderer: the path for GPUs whose driver DXVK cannot use.
-WINED3D=(WINEDLLOVERRIDES="mscoree,mshtml=d;d3d8,d3d9,d3d10core,d3d11,dxgi=b")
-RESULT="$SMOKE/devices-i686.txt" step d3d11-wined3d-x86 120 "${WINE[@]}" "${WINED3D[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d11
-RESULT="$SMOKE/devices-x86_64.txt" step d3d11-wined3d-x64 120 "${WINE[@]}" "${WINED3D[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d11
-for b in x86_64:x64 i686:x86; do
-  grep -q "^FAIL d3d11-wined3d-${b#*:} " "$LOGS/summary.txt" &&
-    diagnose "d3d11-wined3d-${b#*:}" ",+d3d,err+vulkan,warn+vulkan" "${WINED3D[@]}" -- "C:\\smoke\\devices-${b%:*}.exe" d3d11
-done
+# Not covered here: Wine's own Direct3D (WineD3D, Vulkan renderer). Its DXGI needs a display
+# output, which Wine's headless null driver does not provide; on a phone wineandroid does.
 RESULT="$SMOKE/devices-i686.txt" step d3d12-x86 300 "${WINE[@]}" "${GFX[@]}" VKD3D_DEBUG=info "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d12
 RESULT="$SMOKE/devices-x86_64.txt" step d3d12-x64 300 "${WINE[@]}" "${GFX[@]}" VKD3D_DEBUG=info "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d12
 
