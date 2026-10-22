@@ -96,8 +96,8 @@ int main(void)
     INFO("windows %s", product);
     char sysdir[MAX_PATH];
     GetSystemWow64DirectoryA(sysdir, MAX_PATH);
-    CHECK("64-bit prefix", GetFileAttributesA("C:\\windows\\syswow64\\kernel32.dll") != INVALID_FILE_ATTRIBUTES,
-          "no syswow64 kernel32");
+    DWORD attrs = GetFileAttributesA("C:\\windows\\syswow64\\kernel32.dll");
+    CHECK("64-bit prefix", attrs != INVALID_FILE_ATTRIBUTES, "no syswow64 kernel32 (error %lu)", GetLastError());
 
     /* Child processes: Wine starts these by exec'ing its loader again. */
     STARTUPINFOA start = { sizeof(start) };
@@ -131,8 +131,10 @@ int main(void)
     SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in local = { AF_INET };
     local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    int bound = s != INVALID_SOCKET && bind(s, (struct sockaddr *)&local, sizeof(local)) == 0 && listen(s, 1) == 0;
-    CHECK("sockets", bound, "error %d", WSAGetLastError());
+    const char *stage = s == INVALID_SOCKET ? "socket"
+                      : bind(s, (struct sockaddr *)&local, sizeof(local)) ? "bind"
+                      : listen(s, 1) ? "listen" : NULL;
+    CHECK("sockets", !stage, "%s: error %d", stage, WSAGetLastError());
     if (s != INVALID_SOCKET) closesocket(s);
 
     if (failures) out("RESULT FAIL %d", failures); else out("RESULT PASS");
