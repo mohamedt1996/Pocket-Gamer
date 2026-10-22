@@ -1,19 +1,27 @@
 #!/bin/busybox sh
-# PID 1 of the 16 KB page VM: load the modules, mount the runner's own root (9p,
-# read-only) with tmpfs where the test writes, and run the test inside it.
+# PID 1 of the 16 KB page VM. The runner's root is shared read-only over 9p at /host; the
+# VM's root is a tmpfs of symlinks into it, with real directories where the test writes.
+# (Nothing is mounted over a 9p directory: 9p revalidation silently drops such mounts, which
+# hid /proc from Android 15's realpath().)
 /bin/busybox --install -s /bin
 mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev
 for m in $(cat /modules.order); do insmod "/modules/$m" 2>/dev/null; done
 echo "vm: kernel $(uname -r), page size $(getconf PAGESIZE 2>/dev/null || echo ?)"
-mkdir -p /newroot
-# The runner's root, read-only; writable places get tmpfs (no overlayfs: over 9p it broke
-# /proc/self/fd links, which Android 15's realpath() relies on).
-mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576,ro,cache=loose hostroot /newroot || { echo "vm: 9p root failed"; poweroff -f; }
-for d in /data/data/org.pocketarcade.madeira /var/lib/sudo /var/tmp; do mount -t tmpfs -o size=6g tmpfs "/newroot$d" 2>/dev/null; done
-mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576 vmout /newroot/vmout || echo "vm: output share failed"
-mount -t proc proc /newroot/proc || echo "vm: /proc mount failed"; mount -t sysfs sys /newroot/sys
-mount -t devtmpfs dev /newroot/dev; mkdir -p /newroot/dev/pts; mount -t devpts devpts /newroot/dev/pts
-mount -t tmpfs tmpfs /newroot/tmp; mount -t tmpfs tmpfs /newroot/run
-chroot /newroot /bin/bash /vmout/inner.sh
-echo $? > /newroot/vmout/rc
+R=/newroot
+mkdir -p $R && mount -t tmpfs -o size=9g tmpfs $R && mkdir -p $R/host
+mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576,ro hostroot $R/host || { echo "vm: 9p root failed"; poweroff -f; }
+for e in $R/host/* ; do
+  n=${e##*/}
+  case $n in proc|sys|dev|tmp|run|var|data|system|vmout) ;; *) ln -s /host/$n $R/$n ;; esac
+done
+mkdir -p $R/proc $R/sys $R/dev $R/tmp $R/run $R/vmout $R/var/tmp $R/data/data/org.pocketarcade.madeira
+for e in $R/host/var/*; do [ -e "$R/var/${e##*/}" ] || ln -s /host/var/${e##*/} $R/var/; done
+for e in $R/host/data/data/*; do [ -e "$R/data/data/${e##*/}" ] || ln -s /host/data/data/${e##*/} $R/data/data/; done
+# /system: a writable copy of the Termux tree the runner's /system points at (bionic is swapped in).
+sys=$(readlink $R/host/system); mkdir -p $R/system && cp -a "$R/host$sys/." $R/system/
+mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576 vmout $R/vmout || echo "vm: output share failed"
+mount -t proc proc $R/proc; mount -t sysfs sys $R/sys
+mount -t devtmpfs dev $R/dev; mkdir -p $R/dev/pts; mount -t devpts devpts $R/dev/pts
+chroot $R /bin/bash /vmout/inner.sh
+echo $? > $R/vmout/rc
 sync; poweroff -f
