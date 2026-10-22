@@ -29,7 +29,7 @@ install -m755 "$HERE/init" "$WORK/initrd/init"
 
 cat > "$OUT/inner.sh" <<INNER
 #!/bin/bash
-echo "::notice title=16K VM::kernel \$(uname -r), page size \$(getconf PAGESIZE) bytes, bionic \$(cat $OUT/bionic/VERSION)"
+echo "::notice title=16K VM::kernel \$(uname -r), page size \$(getconf PAGESIZE) bytes, SVE vector length \$(cat /proc/sys/abi/sve_default_vector_length 2>/dev/null || echo none) bytes, bionic \$(cat $OUT/bionic/VERSION)"
 [ -e /proc/self/exe ] || echo "::error title=16K VM::/proc is not available inside the VM"
 # Android 15's bionic in place of Android 9's (/system is a writable copy of the Termux tree).
 cp -f $OUT/bionic/linker64 /system/bin/linker64
@@ -80,7 +80,11 @@ rm -rf "\$RT" /tmp/apk "\$P"
 bash runtime/android/tests/smoke/run.sh "$APK" "$TESTS" $OUT/logs
 INNER
 
-if [ -w /dev/kvm ] || sudo test -c /dev/kvm; then ACCEL=(-accel kvm -cpu host); echo "using KVM"; else ACCEL=(-accel tcg,thread=multi -cpu max,pauth=off); echo "using TCG (no KVM)"; fi
+# TCG's "max" CPU has SVE with a 512-bit default vector length. Phones (and the native
+# runner) have 128-bit SVE, and FEX picks its 256-bit AVX path from the vector length,
+# so give the VM what a phone has.
+TCG_CPU=max,pauth=off,sve-max-vq=1,sme=off
+if [ -w /dev/kvm ] || sudo test -c /dev/kvm; then ACCEL=(-accel kvm -cpu host); echo "using KVM"; else ACCEL=(-accel tcg,thread=multi -cpu "$TCG_CPU"); echo "using TCG (no KVM)"; fi
 sudo timeout "${VM_TIMEOUT:-9000}" qemu-system-aarch64 -M virt "${ACCEL[@]}" -smp 4 -m 12G -nographic -no-reboot \
   -kernel "$WORK/kernel/Image" -initrd "$WORK/initrd.gz" -append "console=ttyAMA0 rdinit=/init quiet" \
   -virtfs local,path=/,mount_tag=hostroot,security_model=passthrough,readonly=on \
