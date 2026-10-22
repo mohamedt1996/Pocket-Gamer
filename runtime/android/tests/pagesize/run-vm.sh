@@ -29,7 +29,7 @@ install -m755 "$HERE/init" "$WORK/initrd/init"
 
 cat > "$OUT/inner.sh" <<INNER
 #!/bin/bash
-echo "inside: page size \$(getconf PAGESIZE)"
+echo "::notice title=16K VM::kernel \$(uname -r), page size \$(getconf PAGESIZE) bytes, bionic \$(cat $OUT/bionic/VERSION)"
 # Android 15's bionic in place of Android 9's (/system points into the Termux tree).
 cp -f $OUT/bionic/linker64 /system/bin/linker64
 cp -f $OUT/bionic/lib64/*.so /system/lib64/
