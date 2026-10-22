@@ -19,6 +19,12 @@ turns on the fork's host-independent parts that Madeira's Wine relies on:
   binds FEX's imports to the native implementations already, and the plain
   lookup turned those into ntdll's base address.
 
+- No implicit thread-local storage in the Windows modules (IR capture mark,
+  allocation watch), as the fork already does on iOS: in the WoW64 module the
+  64-bit TEB has no ThreadLocalStoragePointer, so the first block compile of
+  every 32-bit program read through a null pointer; in the ARM64EC module the
+  variable landed in the game's own TLS block.
+
 and supplies non-iOS fallbacks where the fork uses iOS helpers outside their
 guards: identity PE-alias translation, no code-buffer sweep (and so no WoW64
 syscall parking, which only exists for the sweeper), zero VA band, no
@@ -145,6 +151,36 @@ index ffa2709..b96f959 100644
    /* iOS-Madeira: halve the per-thread block-backing arena — it's committed
     * upfront on iOS (see LookupCache.cpp) and 128MB × ~19 threads was OOM-ing
     * the process. 64MB still backs 1024 guest code pages per thread; on
+diff --git a/FEXCore/Source/Interface/IR/PassManager.cpp b/FEXCore/Source/Interface/IR/PassManager.cpp
+index ac1ed15..b12a6ef 100644
+--- a/FEXCore/Source/Interface/IR/PassManager.cpp
++++ b/FEXCore/Source/Interface/IR/PassManager.cpp
+@@ -217,7 +217,8 @@ namespace {
+  * target instruction. Containment, NOT entry RIP: with multiblock the block
+  * routinely starts hundreds of bytes earlier, so an entry-range gate (which is
+  * what I first proposed) would have missed this block entirely. */
+-#if defined(FEX_IOS_HOST) && defined(_WIN32)
++#if (defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)) && defined(_WIN32)
++// Android: same reason; in the WOW64 module the 64-bit TEB has no ThreadLocalStoragePointer at all.
+ // Not thread_local in either Windows module (see AllocWatch.cpp): process-global, so two threads
+ // compiling at once share the mark. For a diagnostic that can only cost a missed capture.
+ // MADEIRA: in the ARM64EC module a thread_local here did not reach xtajit64's own TLS block but
+diff --git a/FEXCore/Source/Utils/AllocWatch.cpp b/FEXCore/Source/Utils/AllocWatch.cpp
+index b1031f9..29c6eb3 100644
+--- a/FEXCore/Source/Utils/AllocWatch.cpp
++++ b/FEXCore/Source/Utils/AllocWatch.cpp
+@@ -63,6 +63,11 @@ namespace {
+     uint64_t Tpidrro;
+     __asm__ volatile("mrs %0, TPIDRRO_EL0" : "=r"(Tpidrro));
+     return Tpidrro & ~uint64_t(7);
++#elif defined(FEX_ANDROID_HOST) && defined(_WIN32) && !defined(ARCHITECTURE_arm64ec)
++    // Android: same TLS limitation; here x18 is the TEB, which is unique per thread.
++    uint64_t Teb;
++    __asm__ volatile("mov %0, x18" : "=r"(Teb));
++    return Teb;
+ #else
+     static thread_local char Anchor {};
+     return reinterpret_cast<uint64_t>(&Anchor);
 diff --git a/Source/Windows/ARM64EC/Module.S b/Source/Windows/ARM64EC/Module.S
 index 668b1d2..88605ff 100644
 --- a/Source/Windows/ARM64EC/Module.S
