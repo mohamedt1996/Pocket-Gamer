@@ -151,6 +151,7 @@ WINEENV=(
   XDG_CACHE_HOME="$APP/wine-cache" ANDROID_ROOT=/system ANDROID_DATA=/data
   FONTCONFIG_FILE="$RT/etc/fonts/fonts.conf"
   FAKE_AAUDIO_STATS="$LOGS/aaudio-stats.txt"
+  FEX_SILENTLOG=0
   VK_ICD_FILENAMES="$(ls "$TERMUX"/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
   WINEDLLOVERRIDES="mscoree,mshtml=d"
 )

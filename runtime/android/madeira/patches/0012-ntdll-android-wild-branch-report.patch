@@ -5,10 +5,10 @@ Subject: [PATCH] ntdll: Name the caller of a branch to a null address (ARM64EC)
 
 ---
 diff --git a/dlls/ntdll/signal_arm64ec.c b/dlls/ntdll/signal_arm64ec.c
-index 2a1333f..0c24006 100644
+index 2a1333f..8df1454 100644
 --- a/dlls/ntdll/signal_arm64ec.c
 +++ b/dlls/ntdll/signal_arm64ec.c
-@@ -3555,10 +3555,62 @@ static void dispatch_syscall( ARM64_NT_CONTEXT *context )
+@@ -3555,10 +3555,64 @@ static void dispatch_syscall( ARM64_NT_CONTEXT *context )
  }
  
  
@@ -29,8 +29,8 @@ index 2a1333f..0c24006 100644
 +    char name[16];
 +    int i;
 +
-+    ERR( "wild branch to %p in thread %04lx, in simulation %u\n", (void *)(ULONG_PTR)ctx->Pc,
-+         GetCurrentThreadId(), get_arm64ec_cpu_area()->InSimulation );
++    android_describe( "wild branch to", ctx->Pc );
++    ERR( "  thread %04lx, in simulation %u\n", GetCurrentThreadId(), get_arm64ec_cpu_area()->InSimulation );
 +    ERR( "  dispatch_call_no_redirect=%p dispatch_fptr=%p dispatch_ret=%p BeginSimulation=%p\n",
 +         __os_arm64x_dispatch_call_no_redirect, __os_arm64x_dispatch_fptr, __os_arm64x_dispatch_ret,
 +         pBeginSimulation );
@@ -59,11 +59,13 @@ index 2a1333f..0c24006 100644
  {
      if (rec->ExceptionCode == STATUS_EMULATION_SYSCALL) dispatch_syscall( arm_ctx );
      context_arm_to_x64( context, arm_ctx );
-+    /* Android: a branch to an address outside every module (a null or stale
-+     * function pointer) is always a bug and the exception record alone cannot
-+     * say who made it. Name the caller: lr, the frame-pointer chain and the
-+     * registers that carry call targets, each resolved to module+offset. */
-+    if (rec->ExceptionCode == STATUS_ACCESS_VIOLATION && arm_ctx->Pc < 0x10000)
++    /* Android: a branch to a null address or to memory that is not code (a
++     * null or stale function pointer: the fault address is the pc itself) is
++     * always a bug and the exception record alone cannot say who made it. Name
++     * the caller: lr, the frame-pointer chain and the registers that carry call
++     * targets, each resolved to module+offset. */
++    if (rec->ExceptionCode == STATUS_ACCESS_VIOLATION &&
++        (arm_ctx->Pc < 0x10000 || (rec->NumberParameters >= 2 && rec->ExceptionInformation[1] == arm_ctx->Pc)))
 +    {
 +        static LONG wild_reported;
 +        if (InterlockedIncrement( &wild_reported ) <= 4) android_report_wild_branch( arm_ctx );
