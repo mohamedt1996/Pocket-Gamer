@@ -13,11 +13,12 @@ turns on the fork's host-independent parts that Madeira's Wine relies on:
   wow64 asks for the 32-bit registers to be reloaded.
 - Phone-sized per-thread lookup cache (2 MB L1 cap, 32 MB block arena).
 - ExitToX64: native short-circuit of ARM64EC fast-forward sequences (x18
-  TEB, no pool aliases). Madeira's Wine routes FFS calls here, including the
-  FEX DLL's own entry point before ProcessInit; emulating that crashed.
+  TEB, no pool aliases), so an EC function reached through its x64 entry
+  stub never enters the emulator.
 
 and supplies non-iOS fallbacks where the fork uses iOS helpers outside their
-guards: identity PE-alias translation, no code-buffer sweep, zero VA band, no
+guards: identity PE-alias translation, no code-buffer sweep (and so no WoW64
+syscall parking, which only exists for the sweeper), zero VA band, no
 C-runtime time() in a JIT diagnostic, and no iOS-only exports in the .def.
 
 Built with -DFEX_ANDROID_HOST by runtime/android/build-fex.sh (fex-madeira).
@@ -170,10 +171,10 @@ index 2f55c27..f728347 100644
    ; madeira-bcd: guest branch history v1
 -  IosGuestBranchTraceLayout DATA
 diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
-index 5c7dd86..c6cc417 100644
+index 5c7dd86..729d80b 100644
 --- a/Source/Windows/WOW64/Module.cpp
 +++ b/Source/Windows/WOW64/Module.cpp
-@@ -420,6 +420,13 @@ extern "C" void IosSweepRegisterThreadEx(FEXCore::Core::InternalThreadState* Thr
+@@ -420,8 +420,19 @@ extern "C" void IosSweepRegisterThreadEx(FEXCore::Core::InternalThreadState* Thr
                                           volatile uint8_t* MigratedPtr);
  extern "C" void IosSweepUnregisterThread(FEXCore::Core::InternalThreadState* Thread);
  extern "C" uint64_t IosCodeBufferSweepGate;
@@ -186,8 +187,14 @@ index 5c7dd86..c6cc417 100644
 +#endif
  
  static bool IosWowSweepEnabled() {
++#ifndef FEX_IOS_HOST
++  /* Android: there is no sweeper to move parked threads, so syscalls keep FEX's own entry. */
++  return false;
++#endif
    static std::atomic<int8_t> Cached {-1};
-@@ -716,7 +723,7 @@ bool HandleUnalignedAccess(TLS TLS, CONTEXT* Context) {
+   int8_t V = Cached.load(std::memory_order_relaxed);
+   if (V < 0) {
+@@ -716,7 +727,7 @@ bool HandleUnalignedAccess(TLS TLS, CONTEXT* Context) {
    return Result.has_value();
  }
  
@@ -196,7 +203,7 @@ index 5c7dd86..c6cc417 100644
  /* MADEIRA: the CPU area is the 32-bit register state other threads see and set.
   *
   * Wine keeps a WOW64_CPURESERVED header ({ USHORT Flags; USHORT Machine; }) at
-@@ -772,7 +779,7 @@ void LockJITContext(TLS TLS) {
+@@ -772,7 +783,7 @@ void LockJITContext(TLS TLS) {
    } while (!TLS.ControlWord().compare_exchange_weak(Expected, New, std::memory_order::relaxed));
    std::atomic_signal_fence(std::memory_order::seq_cst);
  
@@ -205,7 +212,7 @@ index 5c7dd86..c6cc417 100644
    // MADEIRA: a context set from outside (see ConsumeCpuAreaReset) counts as a dirty CPU area.
    if (TLS.TEB == CurrentTEB() && ConsumeCpuAreaReset(TLS.TEB)) {
      Expected |= ControlBits::WOW_CPU_AREA_DIRTY;
-@@ -870,7 +877,7 @@ public:
+@@ -870,7 +881,7 @@ public:
        ReturnRSP += sizeof(StackLayout);
  
        const auto TLS = GetTLS();
@@ -214,7 +221,7 @@ index 5c7dd86..c6cc417 100644
        Context::FlushCpuAreaForExit(TLS); // MADEIRA: see ConsumeCpuAreaReset
  #endif
        Context::UnlockJITContext(TLS);
-@@ -890,7 +897,7 @@ public:
+@@ -890,7 +901,7 @@ public:
        const uint64_t EntryRAX = Frame->State.gregs[FEXCore::X86State::REG_RAX];
  
        const auto TLS = GetTLS();
