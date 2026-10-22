@@ -7,8 +7,13 @@ Linux: x18 is the TEB, anonymous memory can be RWX, exceptions arrive as
 signals. FEX_ANDROID_HOST keeps upstream FEX's Linux design for those and
 turns on the fork's host-independent parts that Madeira's Wine relies on:
 
+- JIT guard page: a fault is only a guard-page hit once the thread has a
+  guard page (a null-pointer fault before the first compile used to
+  "restart" through an unset jump buffer and resume at pc 0).
 - Dispatcher: after SleepThread, resume the guest instead of hlt(0), which
   under Wine's exception path falls into CallbackPtr (fork ml325).
+- WoW64: honour WOW64_CPURESERVED_FLAG_RESET_STATE, which is how Madeira's
+  wow64 asks for the 32-bit registers to be reloaded after SetThreadContext.
 - Phone-sized per-thread lookup cache (2 MB L1 cap, 32 MB block arena),
   committed up front as on iOS rather than on its first access violation.
 - ExitToX64: native short-circuit of ARM64EC fast-forward sequences (x18
@@ -32,46 +37,11 @@ C-runtime time() in a JIT diagnostic, and no iOS-only exports in the .def.
 
 Built with -DFEX_ANDROID_HOST by runtime/android/build-fex.sh (fex-madeira).
 ---
-diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
-index 3b3c7ac..a8cfe19 100644
---- a/FEXCore/Source/Interface/Context/Context.h
-+++ b/FEXCore/Source/Interface/Context/Context.h
-@@ -426,6 +426,9 @@ public:
-   [[nodiscard]]
-   CompileCodeResult CompileCode(FEXCore::Core::InternalThreadState* Thread, uint64_t GuestRIP, uint64_t MaxInst = 0);
-   uintptr_t CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst = 0);
-+#ifdef FEX_ANDROID_HOST
-+  uintptr_t CompileBlockImpl(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst);
-+#endif
-   uintptr_t CompileSingleStep(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP);
- 
-   FEXCore::JITSymbols Symbols;
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index 72bd99e..618b1cf 100644
+index 72bd99e..55705d3 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
-@@ -1424,7 +1424,20 @@ static void IosMonoTryActivate(ContextImpl* CTX, FEXCore::Core::InternalThreadSt
- }
- #endif
- 
-+#ifdef FEX_ANDROID_HOST
- uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst) {
-+  static int AndroidCompileTrace;
-+  const bool Trace = AndroidCompileTrace++ < 8;
-+  if (Trace) LogMan::Msg::EFmt("[android-compile] rip={:#x} frame={} max={}", GuestRIP, static_cast<void*>(Frame), MaxInst);
-+  const uintptr_t Ret = CompileBlockImpl(Frame, GuestRIP, MaxInst);
-+  if (Trace) LogMan::Msg::EFmt("[android-compile] rip={:#x} -> {:#x}", GuestRIP, Ret);
-+  return Ret;
-+}
-+
-+uintptr_t ContextImpl::CompileBlockImpl(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst) {
-+#else
-+uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst) {
-+#endif
-   if constexpr (BLOCK_DEBUGGING) {
-     // Block debugging logic is hand-written and needs to be handled with care.
-     // Force MaxInst to only be one in this case.
-@@ -2076,7 +2089,7 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
+@@ -2076,7 +2076,7 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
          /* Wall-clock elapsed since first HOT sum — answers "is the game
           * still alive at minute N?" Uses time(NULL) for second resolution. */
          static volatile uint64_t s_start_secs = 0;
@@ -81,7 +51,7 @@ index 72bd99e..618b1cf 100644
          uint64_t elapsed = now - s_start_secs;
          LogMan::Msg::EFmt("[HOT sum t={}s] 6fe6={} 6feb={} 28d20={} 28d41={} 28d46={} 687f0={} 68816={} "
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-index 21eadbe..224bbbd 100644
+index 21eadbe..59332cd 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 @@ -612,7 +612,8 @@ void Dispatcher::EmitDispatcher() {
@@ -94,15 +64,6 @@ index 21eadbe..224bbbd 100644
      /* iOS-Madeira ml325 -- THE #51 ROOT CAUSE.
       *
       * Upstream ends this block with hlt(0) and relies on the signal handler to notice
-@@ -855,7 +856,7 @@ void Dispatcher::EmitDispatcher() {
-   Start = reinterpret_cast<uint64_t>(DispatchPtr);
-   End = GetCursorAddress<uint64_t>();
- 
--#ifdef FEX_IOS_HOST
-+#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
-   /* iOS-Madeira ml298 (task #52): PUBLISH THE DISPATCHER ADDRESS MAP.
-    *
-    * ml297's [bogus-host] dump proved CompileBlock is reached with the guest RIP taken from x12,
 diff --git a/FEXCore/Source/Interface/Core/LookupCache.cpp b/FEXCore/Source/Interface/Core/LookupCache.cpp
 index 1b93edb..09916a4 100644
 --- a/FEXCore/Source/Interface/Core/LookupCache.cpp
@@ -321,7 +282,7 @@ index 5e51fb1..a0906a9 100644
        Address < reinterpret_cast<void*>(Thread->JITGuardPage + FEXCore::Utils::FEX_PAGE_SIZE)) {
      FEXCore::UncheckedLongJump::ManuallyLoadJumpBuf(Thread->RestartJump, Thread->JITGuardOverflowArgument, GPRs, FPRs, PC);
 diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
-index 5c7dd86..9359054 100644
+index 5c7dd86..729d80b 100644
 --- a/Source/Windows/WOW64/Module.cpp
 +++ b/Source/Windows/WOW64/Module.cpp
 @@ -420,8 +420,19 @@ extern "C" void IosSweepRegisterThreadEx(FEXCore::Core::InternalThreadState* Thr
@@ -344,60 +305,39 @@ index 5c7dd86..9359054 100644
    static std::atomic<int8_t> Cached {-1};
    int8_t V = Cached.load(std::memory_order_relaxed);
    if (V < 0) {
-@@ -894,7 +905,15 @@ public:
+@@ -716,7 +727,7 @@ bool HandleUnalignedAccess(TLS TLS, CONTEXT* Context) {
+   return Result.has_value();
+ }
+ 
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
+ /* MADEIRA: the CPU area is the 32-bit register state other threads see and set.
+  *
+  * Wine keeps a WOW64_CPURESERVED header ({ USHORT Flags; USHORT Machine; }) at
+@@ -772,7 +783,7 @@ void LockJITContext(TLS TLS) {
+   } while (!TLS.ControlWord().compare_exchange_weak(Expected, New, std::memory_order::relaxed));
+   std::atomic_signal_fence(std::memory_order::seq_cst);
+ 
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
+   // MADEIRA: a context set from outside (see ConsumeCpuAreaReset) counts as a dirty CPU area.
+   if (TLS.TEB == CurrentTEB() && ConsumeCpuAreaReset(TLS.TEB)) {
+     Expected |= ControlBits::WOW_CPU_AREA_DIRTY;
+@@ -870,7 +881,7 @@ public:
+       ReturnRSP += sizeof(StackLayout);
+ 
+       const auto TLS = GetTLS();
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
        Context::FlushCpuAreaForExit(TLS); // MADEIRA: see ConsumeCpuAreaReset
  #endif
        Context::UnlockJITContext(TLS);
-+#ifdef FEX_ANDROID_HOST
-+      static int AndroidSyscallTrace;
-+      const bool Trace = AndroidSyscallTrace++ < 6;
-+      if (Trace) LogMan::Msg::EFmt("[android-syscall] #{} eax={:#x} rsp={:#x} ret={:#x} sp={}", AndroidSyscallTrace, EntryRAX, ReturnRSP, ReturnRIP, __builtin_frame_address(0));
-+#endif
-       Wow64ProcessPendingCrossProcessItems();
-+#ifdef FEX_ANDROID_HOST
-+      if (Trace) LogMan::Msg::EFmt("[android-syscall] cross-process items done");
-+#endif
-       // wow64.dll reads the argument block directly, so it needs a host pointer. The 32-bit values
-       // *inside* the block stay guest and are converted by wow64.dll's own get_ptr/*_32to64
-       // helpers, which the design makes window-aware.
-@@ -903,7 +922,13 @@ public:
-       ReturnRAX = static_cast<uint64_t>(
-         Wow64SystemServiceEx(static_cast<UINT>(EntryRAX), reinterpret_cast<UINT*>(GuestWindow::ToHost(ReturnRSP + 4))));
-       IosWowUnpark(TD);
-+#ifdef FEX_ANDROID_HOST
-+      if (Trace) LogMan::Msg::EFmt("[android-syscall] service returned {:#x}", ReturnRAX);
-+#endif
-       Context::LockJITContext(TLS);
-+#ifdef FEX_ANDROID_HOST
-+      if (Trace) LogMan::Msg::EFmt("[android-syscall] back in JIT context");
-+#endif
-     }
-     // If a new context has been set, use it directly and don't return to the syscall caller
-     if (Frame->State.rip == (uint64_t)BridgeInstrs::Syscall || Frame->State.rip == (uint64_t)BridgeInstrs::UnixCall) {
-@@ -918,6 +943,13 @@ public:
+@@ -890,7 +901,7 @@ public:
+       const uint64_t EntryRAX = Frame->State.gregs[FEXCore::X86State::REG_RAX];
  
-   uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* Frame, FEXCore::HLE::SyscallArguments* Args) override {
-     const auto TLS = GetTLS();
-+#ifdef FEX_ANDROID_HOST
-+    static int AndroidEntryTrace;
-+    if (AndroidEntryTrace++ < 6)
-+      LogMan::Msg::EFmt("[android-syscall] enter rip={:#x} entry_context={} sp={:#x} pc={:#x}", Frame->State.rip,
-+                        static_cast<void*>(TLS.EntryContext()), TLS.EntryContext() ? TLS.EntryContext()->Sp : 0,
-+                        TLS.EntryContext() ? TLS.EntryContext()->Pc : 0);
-+#endif
-     // Stash the the context pointer on the stack, as Simulate can be called from this syscall handler which would overwrite it
-     CONTEXT* EntryContext = TLS.EntryContext();
-     // Call the syscall handler with unwind information pointing to Simulate as its caller
-@@ -1710,6 +1742,12 @@ extern "C" void BTCpuSimulateImpl(CONTEXT* entry_context) {
-   // emitted code, so the sweeper must see it as in-simulation again (and any sweep finish).
-   IosWowUnpark(GetFrontendThreadData(TLS.ThreadState()));
-   TLS.EntryContext() = entry_context;
-+#ifdef FEX_ANDROID_HOST
-+  static int AndroidSimTrace;
-+  if (AndroidSimTrace++ < 4)
-+    LogMan::Msg::EFmt("[android-sim] enter ctx={} sp={:#x} pc={:#x} rip={:#x}", static_cast<void*>(entry_context), entry_context->Sp,
-+                      entry_context->Pc, TLS.ThreadState()->CurrentFrame->State.rip);
-+#endif
-   TLS.CachedCallRetSp() = TLS.ThreadState()->CurrentFrame->State.callret_sp;
- 
-   Context::ScopedJITContextLock Lk {TLS};
+       const auto TLS = GetTLS();
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
+       Context::FlushCpuAreaForExit(TLS); // MADEIRA: see ConsumeCpuAreaReset
+ #endif
+       Context::UnlockJITContext(TLS);
