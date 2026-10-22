@@ -54,6 +54,16 @@ for c in /tmp/cores/core.*; do [ -f "\$c" ] || continue
   python3 runtime/android/tests/smoke/core.py "\$(readlink -f /proc/1/root\$L 2>/dev/null || echo \$L)" "\$c" > $OUT/probe-core.txt 2>&1; break; done
 echo "::\$([ \$rc = 0 ] && echo notice || echo error) title=16K VM wineboot::\$(head -c 3500 $OUT/probe.txt | sed ':a;N;\$!ba;s/\n/%0A/g')"
 [ -s $OUT/probe-core.txt ] && echo "::error title=16K VM wineboot core::\$(head -c 3800 $OUT/probe-core.txt | sed ':a;N;\$!ba;s/\n/%0A/g')"
+if [ \$rc != 0 ]; then
+  # Where the first DLL load fails: module and mapping traces of a fresh start.
+  rm -rf "\$P"
+  timeout 900 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin \
+    WINEDEBUG=+module,+virtual,+loaddll "\$L" wineboot --init > /dev/null 2> $OUT/probe2.log
+  grep -n 'kernel32' $OUT/probe2.log | head -3 > $OUT/probe2.txt
+  l=\$(grep -n 'kernel32' $OUT/probe2.log | head -1 | cut -d: -f1)
+  [ -n "\$l" ] && sed -n "\$((l > 30 ? l - 30 : 1)),\$((l + 25))p" $OUT/probe2.log | grep -v '^linker\|WARNING: linker' >> $OUT/probe2.txt
+  echo "::error title=16K VM first failing load::\$(head -c 3800 $OUT/probe2.txt | sed ':a;N;\$!ba;s/\n/%0A/g')"
+fi
 rm -rf "\$RT" /tmp/apk "\$P"
 [ \$rc = 0 ] || exit 1
 bash runtime/android/tests/smoke/run.sh "$APK" "$TESTS" $OUT/logs
