@@ -1706,6 +1706,13 @@ jobs:
           page: 16 KB
           kernel: arm64-16k
           cpu: neoverse-n1
+        # Control for the Proton build's one 16 KB failure (x86 registry view): same VM,
+        # 4 KB kernel.
+        - wine: proton
+          artifact: Madeira-Android-runtime-lab-debug
+          page: 4 KB
+          kernel: arm64
+          cpu: neoverse-n1
     steps:
     - uses: actions/checkout@v4
     - uses: actions/download-artifact@v4
