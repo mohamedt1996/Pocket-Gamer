@@ -14,7 +14,7 @@ WORK=$(mktemp -d); OUT=/vmout
 mkdir -p "$LOGS"
 note() { echo "::$1 title=$2::$(sed 's/%/%25/g' | head -c 3900 | sed ':a;N;$!ba;s/\n/%0A/g')"; }
 
-sudo mkdir -p "$OUT" && sudo chown "$USER" "$OUT"
+sudo mkdir -p "$OUT" /data/data/org.pocketarcade.madeira && sudo chown "$USER" "$OUT"
 python3 "$HERE/get-kernel.py" "$WORK/kernel" > "$LOGS/kernel.log" 2>&1 || { note error "16K VM: kernel" < "$LOGS/kernel.log"; exit 1; }
 python3 "$HERE/get-bionic.py" "$OUT/bionic" > "$LOGS/bionic.log" 2>&1 || { note error "16K VM: Android 15 bionic" < "$LOGS/bionic.log"; exit 1; }
 cat "$LOGS/kernel.log" "$LOGS/bionic.log"
@@ -30,10 +30,16 @@ install -m755 "$HERE/init" "$WORK/initrd/init"
 cat > "$OUT/inner.sh" <<INNER
 #!/bin/bash
 echo "::notice title=16K VM::kernel \$(uname -r), page size \$(getconf PAGESIZE) bytes, bionic \$(cat $OUT/bionic/VERSION)"
-# Android 15's bionic in place of Android 9's (/system points into the Termux tree).
+# Android 15's bionic in place of Android 9's: /system points into the (read-only) Termux
+# tree, so a writable copy is mounted over it.
+S=\$(readlink -f /system); mkdir -p /tmp/system && cp -a "\$S/." /tmp/system/ && mount --bind /tmp/system "\$S"
 cp -f $OUT/bionic/linker64 /system/bin/linker64
 cp -f $OUT/bionic/lib64/*.so /system/lib64/
 /system/bin/linker64 --help >/dev/null 2>&1; echo "linker64 runs: \$?"
+{ echo "readlink /proc/self/exe: \$(readlink /proc/self/exe)"; exec 3< /etc/hostname; echo "fd3: \$(readlink /proc/self/fd/3)"; exec 3<&-
+  grep -E ' / | /proc | /data' /proc/mounts; ls -la /proc/self/ | head -5
+  W=\$(ls -d /data/data/org.pocketarcade.madeira 2>/dev/null); echo "app dir: \$W"; } > $OUT/env.txt 2>&1
+echo "::notice title=16K VM environment::\$(sed ':a;N;\$!ba;s/\n/%0A/g' $OUT/env.txt)"
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin STACK_SYMBOLS="${STACK_SYMBOLS:-}" SMOKE_TIME_SCALE="${SMOKE_TIME_SCALE:-1}"
 cd "$REPO" && bash runtime/android/tests/smoke/run.sh "$APK" "$TESTS" $OUT/logs
 INNER
