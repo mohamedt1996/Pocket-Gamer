@@ -16,7 +16,9 @@ note() { echo "::$1 title=$2::$(sed 's/%/%25/g' | head -c 3900 | sed ':a;N;$!ba;
 
 sudo mkdir -p "$OUT" /data/data/org.pocketarcade.madeira && sudo chown "$USER" "$OUT"
 python3 "$HERE/get-kernel.py" "$WORK/kernel" > "$LOGS/kernel.log" 2>&1 || { note error "16K VM: kernel" < "$LOGS/kernel.log"; exit 1; }
-python3 "$HERE/get-bionic.py" "$OUT/bionic" > "$LOGS/bionic.log" 2>&1 || { note error "16K VM: Android 15 bionic" < "$LOGS/bionic.log"; exit 1; }
+# BIONIC=termux keeps the userspace's own Android 9 bionic (a control; 4 KB kernels only).
+if [ "${BIONIC:-}" = termux ]; then mkdir -p "$OUT/bionic/lib64"; echo "termux (Android 9)" > "$OUT/bionic/VERSION"; cp /system/bin/linker64 "$OUT/bionic/"; echo "keeping the userspace's bionic" > "$LOGS/bionic.log"
+else python3 "$HERE/get-bionic.py" "$OUT/bionic" > "$LOGS/bionic.log" 2>&1 || { note error "16K VM: Android 15 bionic" < "$LOGS/bionic.log"; exit 1; }; fi
 cat "$LOGS/kernel.log" "$LOGS/bionic.log"
 
 # initramfs: busybox, the modules, init.
@@ -33,7 +35,7 @@ echo "::notice title=16K VM::kernel \$(uname -r), page size \$(getconf PAGESIZE)
 [ -e /proc/self/exe ] || echo "::error title=16K VM::/proc is not available inside the VM"
 # Android 15's bionic in place of Android 9's (/system is a writable copy of the Termux tree).
 cp -f $OUT/bionic/linker64 /system/bin/linker64
-cp -f $OUT/bionic/lib64/*.so /system/lib64/
+cp -f $OUT/bionic/lib64/*.so /system/lib64/ 2>/dev/null
 /system/bin/linker64 --help >/dev/null 2>&1; echo "linker64 runs: \$?"
 { echo "readlink /proc/self/exe: \$(readlink /proc/self/exe)"; exec 3< /etc/hostname; echo "fd3: \$(readlink /proc/self/fd/3)"; exec 3<&-
   grep -E ' / | /proc | /data' /proc/mounts; ls -la /proc/self/ | head -5
