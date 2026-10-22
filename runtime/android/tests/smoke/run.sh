@@ -184,27 +184,29 @@ RESULT="$SMOKE/cli-i686.txt" step cli-x86 600 "${WINE[@]}" "$LOADER" "${DESKTOP[
 ulimit -c unlimited
 sudo mkdir -p /tmp/cores && sudo chmod 1777 /tmp/cores
 echo '/tmp/cores/core.%p' | sudo tee /proc/sys/kernel/core_pattern > /dev/null
+diagnose() { # NAME EXTRA_DEBUG ENV... -- WINDOWS_COMMAND...: rerun a failed step directly
+  local name=$1 debug=$2; shift 2
+  local envs=() 
+  while [ "$1" != "--" ]; do envs+=("$1"); shift; done; shift
+  rm -f /tmp/cores/core.*
+  step "$name-direct" 120 "${WINE[@]}" "${envs[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,warn+seh$debug" "$LOADER" "$@" || true
+  # The last access violation's code, address and registers, and where the FEX modules were loaded.
+  timeout 120 "${WINE[@]}" "${envs[@]}" WINEDEBUG="+timestamp,+tid,+seh,+loaddll" "$LOADER" "$@" > /dev/null 2> "$LOGS/$name-seh.log"
+  { grep -m4 -E 'Loaded .*(fex|wow64)' "$LOGS/$name-seh.log"
+    l=$(grep -n 'dispatch_exception code=c0000005' "$LOGS/$name-seh.log" | tail -1 | cut -d: -f1)
+    [ -n "$l" ] && sed -n "${l},$((l + 14))p" "$LOGS/$name-seh.log"
+  } | sed 's/^[0-9.]*:[0-9a-f]*://' > "$LOGS/$name-exc.txt"
+  [ -s "$LOGS/$name-exc.txt" ] && annotate error "$name-direct: last access violation" "$LOGS/$name-exc.txt"
+  for c in /tmp/cores/core.*; do
+    [ -f "$c" ] || continue
+    sudo chmod a+r "$c"
+    timeout 200 python3 "$HERE/core.py" "$LOADER" "$c" > "$LOGS/$name-core.txt" 2>&1
+    annotate error "$name-direct: core of a crashed process" "$LOGS/$name-core.txt"
+    break
+  done
+}
 for b in x86_64:x64 i686:x86; do
-  if grep -q "^FAIL cli-${b#*:} " "$LOGS/summary.txt"; then
-    rm -f /tmp/cores/core.*
-    step "cli-${b#*:}-direct" 120 "${WINE[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,warn+seh,+winsock" \
-      "$LOADER" "C:\\smoke\\cli-${b%:*}.exe" || true
-    # The first exception's code, address and registers, and where the FEX modules were loaded.
-    timeout 120 "${WINE[@]}" WINEDEBUG="+timestamp,+tid,+seh,+loaddll" \
-      "$LOADER" "C:\\smoke\\cli-${b%:*}.exe" > /dev/null 2> "$LOGS/cli-${b#*:}-seh.log"
-    { grep -m4 -E 'Loaded .*(fex|wow64)' "$LOGS/cli-${b#*:}-seh.log"
-      l=$(grep -n 'dispatch_exception code=c0000005' "$LOGS/cli-${b#*:}-seh.log" | tail -1 | cut -d: -f1)
-      [ -n "$l" ] && sed -n "${l},$((l + 14))p" "$LOGS/cli-${b#*:}-seh.log"
-    } | sed 's/^[0-9.]*:[0-9a-f]*://' > "$LOGS/cli-${b#*:}-exc.txt"
-    [ -s "$LOGS/cli-${b#*:}-exc.txt" ] && annotate error "cli-${b#*:}-direct: first exception" "$LOGS/cli-${b#*:}-exc.txt"
-    for c in /tmp/cores/core.*; do
-      [ -f "$c" ] || continue
-      sudo chmod a+r "$c"
-      timeout 200 python3 "$HERE/core.py" "$LOADER" "$c" > "$LOGS/cli-${b#*:}-core.txt" 2>&1
-      annotate error "cli-${b#*:}-direct: core of a crashed process" "$LOGS/cli-${b#*:}-core.txt"
-      break
-    done
-  fi
+  grep -q "^FAIL cli-${b#*:} " "$LOGS/summary.txt" && diagnose "cli-${b#*:}" ",+winsock" -- "C:\\smoke\\cli-${b%:*}.exe"
 done
 
 # Graphics devices: DXVK and VKD3D installed into the prefix as WineLaunch does,
@@ -244,6 +246,10 @@ RESULT="$SMOKE/devices-x86_64.txt" step d3d11-x64 120 "${WINE[@]}" "${GFX[@]}" "
 WINED3D=(WINEDLLOVERRIDES="mscoree,mshtml=d;d3d8,d3d9,d3d10core,d3d11,dxgi=b")
 RESULT="$SMOKE/devices-i686.txt" step d3d11-wined3d-x86 120 "${WINE[@]}" "${WINED3D[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d11
 RESULT="$SMOKE/devices-x86_64.txt" step d3d11-wined3d-x64 120 "${WINE[@]}" "${WINED3D[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d11
+for b in x86_64:x64 i686:x86; do
+  grep -q "^FAIL d3d11-wined3d-${b#*:} " "$LOGS/summary.txt" &&
+    diagnose "d3d11-wined3d-${b#*:}" ",+d3d,err+vulkan,warn+vulkan" "${WINED3D[@]}" -- "C:\\smoke\\devices-${b%:*}.exe" d3d11
+done
 RESULT="$SMOKE/devices-i686.txt" step d3d12-x86 300 "${WINE[@]}" "${GFX[@]}" VKD3D_DEBUG=info "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d12
 RESULT="$SMOKE/devices-x86_64.txt" step d3d12-x64 300 "${WINE[@]}" "${GFX[@]}" VKD3D_DEBUG=info "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d12
 

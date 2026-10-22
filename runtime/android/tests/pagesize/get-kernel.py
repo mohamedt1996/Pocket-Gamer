@@ -41,7 +41,7 @@ subprocess.run(['dpkg-deb', '-x', str(deb), str(root)], check=True)
 vmlinuz = next((root / 'boot').glob('vmlinuz-*'))
 shutil.copyfile(vmlinuz, out / 'Image')
 kver = vmlinuz.name[len('vmlinuz-'):]
-moddir = next(root.glob(f'*lib/modules/{kver}'))
+moddir = next(p for p in root.glob('**/modules/' + kver) if p.parent.name == 'modules')
 log('kernel', kver, 'config page size:', subprocess.run(['grep', '-h', 'CONFIG_ARM64_.*K_PAGES=y', *root.glob('boot/config-*')], capture_output=True, text=True).stdout.strip())
 
 files = {}
