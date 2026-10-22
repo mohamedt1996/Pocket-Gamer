@@ -99,26 +99,39 @@ app's path, the prefix and environment `WineLaunch` creates, no
 `LD_LIBRARY_PATH`, programs started through `explorer /desktop=shell,...` like
 `WineActivity` starts games. See `runtime/android/tests/smoke/`.
 
-| Check | Default APK (Proton fork) | Madeira Wine APK (experimental) |
+| Check | Default APK (Proton fork + upstream FEX) | Madeira APK (Madeira's Wine + Madeira's FEX, Android mode) |
 |---|---|---|
 | wineboot (new 64-bit prefix) | passes | passes |
-| x64 program via FEX ARM64EC: threads, memory, exceptions, files, registry, child process, timers, sockets | passes | **fails**: x64 programs hang |
+| x64 program via FEX ARM64EC: threads, memory, exceptions, files, registry, child process, timers, sockets | passes | passes |
 | x86 program via FEX WoW64: same checks | passes | passes |
-| Vulkan (lavapipe CPU driver standing in for the GPU) | passes, x64 and x86 | x86 passes |
-| Direct3D 11 device through DXVK | passes, x64 and x86 | x86 passed once; not reliable |
-| Direct3D 12 device through VKD3D-Proton | passes, x64 and x86 | x86 passed once; not reliable |
-| Sound: WASAPI → DirectAudio → AAudio (a stand-in AAudio that measures what arrives) | tested, x64 and x86 | — |
+| Vulkan (lavapipe CPU driver standing in for the GPU) | passes, x64 and x86 | passes, x64 and x86 |
+| Direct3D 11 device through DXVK | passes, x64 and x86 | passes, x64 and x86 |
+| Direct3D 12 device through VKD3D-Proton | passes, x64 and x86 | passes, x64 and x86 |
+| Sound: WASAPI → DirectAudio → AAudio (a stand-in AAudio that measures what arrives) | passes, x64 and x86 | passes, x64 and x86 |
 
-Why Madeira Wine's x64 path fails: Madeira's Wine runs its iOS ARM64EC design on
-Android too (its log shows "[iOS] early locale_init", a skipped ntdll re-patch and
-a first exception at a misaligned address). That design expects FEX's iOS mode
-and iOS's JIT memory pool. Building Madeira's own FEX fork (willfaust/FEX) for
-Android was tried: it compiles with small fallbacks, but x64 still hangs and x86
-gets worse, so the Madeira APK stays on upstream FEX. Making x64 work means
-porting that iOS design to Android in both forks. The Madeira Wine build also
-sometimes hangs creating the desktop (`NtUserCreateDesktopEx` waiting inside a
-display refresh). Treat it as experimental; the default APK covers everything
-above.
+Both APKs must pass this job. A failing program is run again directly; a
+crash leaves a core whose report (`core.py`) names each address's library or
+PE image, and Madeira's Wine prints the caller of any branch into non-code
+memory.
+
+### How the Madeira APK runs Madeira's design on Android
+
+Madeira's Wine (willfaust/wine) and FEX (willfaust/FEX) were written for iOS.
+They are kept as they are, with Android changes as patches
+(`runtime/android/madeira/`):
+
+- **FEX in Android mode** (`fex-android.patch`, `-DFEX_ANDROID_HOST`): upstream
+  FEX's Linux design where iOS has its own (x18 is the TEB, plain RWX memory,
+  signals), the fork's host-independent parts where Madeira's Wine relies on
+  them, and fixes for paths the fork only ran on iOS: no implicit TLS in the
+  Windows modules, CheckCall keeping already-native ntdll targets, no
+  guard-page "restart" before a guard page exists, lookup cache committed up
+  front, no syscall parking (it serves the iOS-only sweeper).
+- **Wine**: iOS assumed a 39-bit user space. On Linux/Android Wine maps modules
+  and stacks near 2^47, so the ARM64EC call checker sent every ntdll call into
+  the emulator and the IO_STATUS_BLOCK guard refused every socket (patch 0013);
+  Wine's own host address-limit detection replaces a hard-coded 39-bit limit
+  (patch 0001). Madeira's iOS-only unix calls get Android entries (0011).
 
 The `android_emulator_test` job runs the app itself (without the runtime) on
 Android 11 and 14 emulator images with ARM64 translation: install, start, first
