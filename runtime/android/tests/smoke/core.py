@@ -94,6 +94,9 @@ for name, val in re.findall(r'^(x\d+)\s+(0x[0-9a-f]+)', regs, re.M):
     print(f'  sp={sp:#x} fp={fp_:#x} x0={x[0]:#x} x1={x[1]:#x} x2={x[2]:#x} x3={x[3]:#x} x8={x[8]:#x}'
           f' x16={x[16]:#x} x17={x[17]:#x} x18={x[18]:#x} x28={x[28]:#x}')
     print(gdb(f'x/10i {pc - 20:#x}'))
+    # Name the PE images behind the interesting anonymous addresses.
+    os.environ['PE_ADDRS'] = ' '.join(f'{v:#x}' for v in (pc, lr, x[16], x[17], x[2], x[8], x[9], x[10], x[11]) if v > 0x10000)
+    print(gdb('source ' + os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pe_lookup.py')))
     break
 else:
     print('no CONTEXT among', ' '.join(tried))
