@@ -138,10 +138,7 @@ python3 -c "import json,sys;m=json.load(open(sys.argv[1]));print('runtime',m['wi
 if grep -q com.termux "$LOGS/runpath.log"; then annotate error "Termux RUNPATH still in runtime" "$LOGS/runpath.log"; failed=1; fi
 
 # 2. Prefix and environment, as WineLaunch writes them (Graphics: null for headless).
-mkdir -p "$PREFIX/drive_c" "$PREFIX/dosdevices"
-ln -sfn ../drive_c "$PREFIX/dosdevices/c:"; ln -sfn / "$PREFIX/dosdevices/z:"
-printf 'WINE REGISTRY Version 2\n;; All keys relative to \\\\Machine\n\n#arch=win64\n\n[Software\\\\Microsoft\\\\Wow64\\\\amd64]\n@="libarm64ecfex.dll"\n\n[Software\\\\Microsoft\\\\Wow64\\\\x86]\n@="libwow64fex.dll"\n\n' > "$PREFIX/system.reg"
-printf 'WINE REGISTRY Version 2\n\n#arch=win64\n\n[Software\\\\Wine\\\\Drivers]\n"Audio"="directaudio"\n"Graphics"="null"\n\n[Software\\\\Wine\\\\Direct3D]\n"renderer"="vulkan"\n\n' > "$PREFIX/user.reg"
+bash "$HERE/prefix.sh" "$PREFIX"
 # env -i: nothing from the host leaks in, LD_LIBRARY_PATH included.
 WINEENV=(
   HOME="$GAME" TMPDIR="$GAME/tmp" WINEPREFIX="$PREFIX"

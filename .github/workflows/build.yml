@@ -1682,7 +1682,7 @@ jobs:
         if-no-files-found: error
         include-hidden-files: true
   android_pagesize_test:
-    name: "Android runtime on a 16 KB page kernel \u2022 ${{ matrix.wine }}"
+    name: "Android runtime on a ${{ matrix.page }} page kernel \u2022 ${{ matrix.wine }}"
     needs: [android_port, android_port_madeira]
     if: always() && needs.android_port.result == 'success'
     runs-on: ubuntu-24.04-arm
@@ -1698,8 +1698,18 @@ jobs:
         include:
         - wine: proton
           artifact: Madeira-Android-runtime-lab-debug
+          page: 16 KB
+          kernel: arm64-16k
         - wine: madeira
           artifact: MadeiraWine-Android-runtime-lab-debug
+          page: 16 KB
+          kernel: arm64-16k
+        # Control: the same VM and Android 15 userspace on Debian's 4 KB kernel, so a
+        # failure above can be told apart from one the VM itself causes.
+        - wine: madeira
+          artifact: MadeiraWine-Android-runtime-lab-debug
+          page: 4 KB
+          kernel: arm64
     steps:
     - uses: actions/checkout@v4
     - uses: actions/download-artifact@v4
@@ -1723,19 +1733,20 @@ jobs:
       timeout-minutes: 180
       env:
         SMOKE_TIME_SCALE: "8"
+        KERNEL_FLAVOR: ${{ matrix.kernel }}
       run: bash runtime/android/tests/pagesize/run-vm.sh apk/*.apk tests-bin logs
     - name: Publish the VM's trace logs as check runs
       if: always()
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        bash runtime/android/tests/pagesize/publish-logs.sh "16K ${{ matrix.wine }}" \
+        bash runtime/android/tests/pagesize/publish-logs.sh "${{ matrix.kernel }} ${{ matrix.wine }}" \
           /vmout/probe.log /vmout/probe2.log /vmout/cli-i686.log /vmout/cli-x86_64.log \
           /vmout/logs/cli-x86-seh.log /vmout/logs/cli-x64-seh.log
     - uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: Android-pagesize-test-${{ matrix.wine }}
+        name: Android-pagesize-test-${{ matrix.kernel }}-${{ matrix.wine }}
         path: logs
 
   android_emulator_test:
@@ -1793,8 +1804,18 @@ jobs:
         include:
         - wine: proton
           artifact: Madeira-Android-runtime-lab-debug
+          page: 16 KB
+          kernel: arm64-16k
         - wine: madeira
           artifact: MadeiraWine-Android-runtime-lab-debug
+          page: 16 KB
+          kernel: arm64-16k
+        # Control: the same VM and Android 15 userspace on Debian's 4 KB kernel, so a
+        # failure above can be told apart from one the VM itself causes.
+        - wine: madeira
+          artifact: MadeiraWine-Android-runtime-lab-debug
+          page: 4 KB
+          kernel: arm64
     steps:
     - uses: actions/checkout@v4
     - uses: actions/download-artifact@v4

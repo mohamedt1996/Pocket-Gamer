@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Fetch Debian's arm64 16 KB-page kernel and the modules a 9p/overlay root needs.
+KERNEL_FLAVOR=arm64 fetches the 4 KB-page kernel instead (a control run: same
+VM, same userspace, only the page size differs).
 
 Writes OUT/Image (as packaged: QEMU unpacks gzip and EFI zboot images),
 OUT/modules/*.ko (decompressed) and OUT/modules.order (load order).
 
 usage: get-kernel.py OUT_DIR
 """
-import lzma, re, shutil, subprocess, sys, tempfile, urllib.request
+import lzma, os, re, shutil, subprocess, sys, tempfile, urllib.request
 from pathlib import Path
 
 out = Path(sys.argv[1]); out.mkdir(parents=True, exist_ok=True)
 MIRROR = 'https://deb.debian.org/debian/'
+FLAVOR = os.environ.get('KERNEL_FLAVOR', 'arm64-16k')
 WANT = ['virtio_pci', 'virtio_mmio', '9pnet_virtio', '9p', 'overlay', 'virtio_blk']
 
 def log(*a): print('[kernel]', *a, flush=True)
@@ -23,14 +26,14 @@ for dist in ('trixie', 'trixie-backports', 'sid'):
         log(dist, 'index failed:', e); continue
     cands = []
     for block in text.split('\n\n'):
-        m = re.search(r'^Package: (linux-image-(\d+\.\d+)[^\s]*-arm64-16k(?:-unsigned)?)$', block, re.M)
-        if not m: continue
+        m = re.search(r'^Package: (linux-image-(\d+\.\d+)[^\s]*-' + re.escape(FLAVOR) + r'(?:-unsigned)?)$', block, re.M)
+        if not m or re.search(r'-(rt|cloud)-', m.group(1)): continue
         fn = re.search(r'^Filename: (\S+)$', block, re.M).group(1)
         ver = tuple(int(x) for x in re.findall(r'\d+', m.group(1))[:4])
         cands.append((ver, m.group(1), fn))
     if cands:
         pkgs = max(cands); log(dist, 'chose', pkgs[1]); break
-if not pkgs: raise SystemExit('no arm64-16k kernel package found')
+if not pkgs: raise SystemExit(f'no {FLAVOR} kernel package found')
 
 work = Path(tempfile.mkdtemp())
 deb = work / 'k.deb'

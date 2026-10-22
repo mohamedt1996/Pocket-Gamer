@@ -45,6 +45,7 @@ cd "$REPO"
 RT=/data/data/org.pocketarcade.madeira/files/madeira-runtime-v2; P=/tmp/probe-prefix
 mkdir -p "\$RT" /tmp/cores && unzip -q -o "$APK" assets/madeira-runtime.zip -d /tmp/apk && unzip -q -o /tmp/apk/assets/madeira-runtime.zip -d "\$RT" && chmod -R u+x "\$RT"
 echo '/tmp/cores/core.%p' > /proc/sys/kernel/core_pattern; ulimit -c unlimited
+bash runtime/android/tests/smoke/prefix.sh "\$P"   # as the app writes it before the first start
 L="\$RT/lib/wine/aarch64-unix/wine"
 timeout 1200 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin \
   WINEDEBUG=+timestamp,+pid,warn+seh,warn+module,err+all "\$L" wineboot --init > $OUT/probe.out 2> $OUT/probe.log
@@ -56,7 +57,7 @@ echo "::\$([ \$rc = 0 ] && echo notice || echo error) title=16K VM wineboot::\$(
 [ -s $OUT/probe-core.txt ] && echo "::error title=16K VM wineboot core::\$(head -c 3800 $OUT/probe-core.txt | sed ':a;N;\$!ba;s/\n/%0A/g')"
 if [ \$rc != 0 ]; then
   # Where the first DLL load fails: module and mapping traces of a fresh start.
-  rm -rf "\$P"
+  rm -rf "\$P"; bash runtime/android/tests/smoke/prefix.sh "\$P"
   timeout 900 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin \
     WINEDEBUG=+module,+loaddll,+file "\$L" wineboot --init > /dev/null 2> $OUT/probe2.log
   { ls -la "\$RT/lib/wine/" "\$RT"/lib/wine/*-windows/kernel32.dll 2>&1 | head -20; grep -n 'kernel32' $OUT/probe2.log | head -40; } > $OUT/probe2.txt
