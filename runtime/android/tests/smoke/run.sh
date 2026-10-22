@@ -189,6 +189,14 @@ for b in x86_64:x64 i686:x86; do
     rm -f /tmp/cores/core.*
     step "cli-${b#*:}-direct" 120 "${WINE[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,warn+seh,+winsock" \
       "$LOADER" "C:\\smoke\\cli-${b%:*}.exe" || true
+    # The first exception's code, address and registers, and where the FEX modules were loaded.
+    timeout 120 "${WINE[@]}" WINEDEBUG="+timestamp,+tid,+seh,+loaddll" \
+      "$LOADER" "C:\\smoke\\cli-${b%:*}.exe" > /dev/null 2> "$LOGS/cli-${b#*:}-seh.log"
+    { grep -m4 -E 'Loaded .*(fex|wow64)' "$LOGS/cli-${b#*:}-seh.log"
+      l=$(grep -n 'dispatch_exception code=c0000005' "$LOGS/cli-${b#*:}-seh.log" | tail -1 | cut -d: -f1)
+      [ -n "$l" ] && sed -n "${l},$((l + 14))p" "$LOGS/cli-${b#*:}-seh.log"
+    } | sed 's/^[0-9.]*:[0-9a-f]*://' > "$LOGS/cli-${b#*:}-exc.txt"
+    [ -s "$LOGS/cli-${b#*:}-exc.txt" ] && annotate error "cli-${b#*:}-direct: first exception" "$LOGS/cli-${b#*:}-exc.txt"
     for c in /tmp/cores/core.*; do
       [ -f "$c" ] || continue
       sudo chmod a+r "$c"
