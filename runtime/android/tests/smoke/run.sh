@@ -180,10 +180,22 @@ RESULT="$SMOKE/cli-x86_64.txt" step cli-x64 600 "${WINE[@]}" "$LOADER" "${DESKTO
 RESULT="$SMOKE/cli-i686.txt" step cli-x86 600 "${WINE[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\cli-i686.exe'
 # A program that ends without a result: run it directly (no desktop launcher) to get its
 # exit status and Wine's exception messages.
+# A process killed by a signal leaves a core: where it was goes into its own annotation.
+ulimit -c unlimited
+sudo mkdir -p /tmp/cores && sudo chmod 1777 /tmp/cores
+echo '/tmp/cores/core.%p' | sudo tee /proc/sys/kernel/core_pattern > /dev/null
 for b in x86_64:x64 i686:x86; do
   if grep -q "^FAIL cli-${b#*:} " "$LOGS/summary.txt"; then
+    rm -f /tmp/cores/core.*
     step "cli-${b#*:}-direct" 120 "${WINE[@]}" WINEDEBUG="+timestamp,+pid,+tid,warn+module,warn+seh" \
       "$LOADER" "C:\\smoke\\cli-${b%:*}.exe" || true
+    for c in /tmp/cores/core.*; do
+      [ -f "$c" ] || continue
+      sudo chmod a+r "$c"
+      timeout 200 python3 "$HERE/core.py" "$LOADER" "$c" > "$LOGS/cli-${b#*:}-core.txt" 2>&1
+      annotate error "cli-${b#*:}-direct: core of a crashed process" "$LOGS/cli-${b#*:}-core.txt"
+      break
+    done
   fi
 done
 

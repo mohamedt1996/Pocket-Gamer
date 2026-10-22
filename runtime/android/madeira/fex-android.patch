@@ -15,6 +15,10 @@ turns on the fork's host-independent parts that Madeira's Wine relies on:
 - ExitToX64: native short-circuit of ARM64EC fast-forward sequences (x18
   TEB, no pool aliases), so an EC function reached through its x64 entry
   stub never enters the emulator.
+- CheckCall (the call checker FEX installs for its own ntdll calls): a target
+  that is not in ntdll's redirection table is kept as is. Madeira's loader
+  binds FEX's imports to the native implementations already, and the plain
+  lookup turned those into ntdll's base address.
 
 and supplies non-iOS fallbacks where the fork uses iOS helpers outside their
 guards: identity PE-alias translation, no code-buffer sweep (and so no WoW64
@@ -75,7 +79,7 @@ index ffa2709..b96f959 100644
     * upfront on iOS (see LookupCache.cpp) and 128MB × ~19 threads was OOM-ing
     * the process. 64MB still backs 1024 guest code pages per thread; on
 diff --git a/Source/Windows/ARM64EC/Module.S b/Source/Windows/ARM64EC/Module.S
-index 668b1d2..696a532 100644
+index 668b1d2..88605ff 100644
 --- a/Source/Windows/ARM64EC/Module.S
 +++ b/Source/Windows/ARM64EC/Module.S
 @@ -86,6 +86,43 @@ check_target_ec:
@@ -122,6 +126,31 @@ index 668b1d2..696a532 100644
  #ifdef FEX_IOS_HOST
    // iOS ml316 FFS BYPASS (root cause of the ml315 SCM-RPC ccontext=0x10 kill).
    //
+@@ -539,11 +576,24 @@ DIRECT_SYSCALL_WRAPPER("#NtProtectVirtualMemoryNative", WineNtProtectVirtualMemo
+   adrp x17, NtDllRedirectionLUTSize
+   ldr x17, [x17, #:lo12:NtDllRedirectionLUTSize]
+   cmp x16, x17
++#ifdef FEX_ANDROID_HOST
++  // Android: Madeira's loader already binds FEX's ntdll imports to the native
++  // implementations, which are not redirection sources: their LUT entry is 0
++  // and the lookup would return ntdll's base. Keep any target that has no
++  // entry, and never read the entry one past the end of the table.
++  b.hs end
++  adrp x17, NtDllRedirectionLUT
++  ldr x17, [x17, #:lo12:NtDllRedirectionLUT]
++  ldr w17, [x17, x16, lsl #2]
++  cbz w17, end
++  add x11, x17, x9
++#else
+   b.hi end
+   adrp x17, NtDllRedirectionLUT
+   ldr x17, [x17, #:lo12:NtDllRedirectionLUT]
+   ldr w11, [x17, x16, lsl #2]
+   add x11, x11, x9
++#endif
+ end:
+   ret
+ 
 diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
 index f79c770..e556940 100644
 --- a/Source/Windows/ARM64EC/Module.cpp
