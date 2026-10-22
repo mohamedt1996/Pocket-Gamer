@@ -102,8 +102,11 @@ data class GameConfig(
         put("binds", JSONObject(binds as Map<*, *>)); put("stickMouse", stickMouse)
     }
 
-    /** The graphics path a launch uses: the choice, or for "auto" the one the program's APIs suit. */
-    fun resolvedGraphics(): String = if (graphics != "auto") graphics else org.pocketarcade.madeira.core.PeInspector.recommendedGraphics(apis.toSet())
+    /** The graphics path a launch uses: the choice, or for "auto" the one the program's APIs suit,
+     *  stepped down to what this phone's GPU driver can run (GraphicsChoice). */
+    fun resolvedGraphics(gpu: org.pocketarcade.madeira.platform.GpuCaps.Info? = org.pocketarcade.madeira.platform.GpuCaps.current): String =
+        if (graphics != "auto") graphics
+        else org.pocketarcade.madeira.core.GraphicsChoice.fit(org.pocketarcade.madeira.core.PeInspector.recommendedGraphics(apis.toSet()), gpu)
 
     companion object {
         fun from(o: JSONObject?): GameConfig {

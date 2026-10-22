@@ -70,6 +70,9 @@ class MadeiraActivity : ComponentActivity() {
         if (SessionState.sessionRunning(this)) graph.library.adoptRunningSession()
         graph.library.start()
         lifecycleScope.launch { graph.localGames.refresh() }
+        // What the phone's GPU driver can run decides each game's "Auto" graphics path.
+        val appContext = applicationContext
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) { org.pocketarcade.madeira.platform.GpuCaps.load(appContext) }
         if (!SessionState.sessionRunning(this)) graph.dock.cleanup()
         setContent {
             val theme by graph.settings.theme.collectAsState()

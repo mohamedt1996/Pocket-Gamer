@@ -141,7 +141,7 @@ if grep -q com.termux "$LOGS/runpath.log"; then annotate error "Termux RUNPATH s
 mkdir -p "$PREFIX/drive_c" "$PREFIX/dosdevices"
 ln -sfn ../drive_c "$PREFIX/dosdevices/c:"; ln -sfn / "$PREFIX/dosdevices/z:"
 printf 'WINE REGISTRY Version 2\n;; All keys relative to \\\\Machine\n\n#arch=win64\n\n[Software\\\\Microsoft\\\\Wow64\\\\amd64]\n@="libarm64ecfex.dll"\n\n[Software\\\\Microsoft\\\\Wow64\\\\x86]\n@="libwow64fex.dll"\n\n' > "$PREFIX/system.reg"
-printf 'WINE REGISTRY Version 2\n\n#arch=win64\n\n[Software\\\\Wine\\\\Drivers]\n"Audio"="directaudio"\n"Graphics"="null"\n\n' > "$PREFIX/user.reg"
+printf 'WINE REGISTRY Version 2\n\n#arch=win64\n\n[Software\\\\Wine\\\\Drivers]\n"Audio"="directaudio"\n"Graphics"="null"\n\n[Software\\\\Wine\\\\Direct3D]\n"renderer"="vulkan"\n\n' > "$PREFIX/user.reg"
 # env -i: nothing from the host leaks in, LD_LIBRARY_PATH included.
 WINEENV=(
   HOME="$GAME" TMPDIR="$GAME/tmp" WINEPREFIX="$PREFIX"
@@ -240,6 +240,10 @@ RESULT="$SMOKE/vk-x86_64.txt" step vk-x64 90 "${WINE[@]}" "${GFX[@]}" WINEDEBUG=
 RESULT="$SMOKE/vk-x86_64.txt" step vk-x64-standalone 90 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\vk-x86_64.exe'
 RESULT="$SMOKE/devices-i686.txt" step d3d11-x86 120 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d11
 RESULT="$SMOKE/devices-x86_64.txt" step d3d11-x64 120 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d11
+# Wine's own Direct3D on its Vulkan renderer: the path for GPUs whose driver DXVK cannot use.
+WINED3D=(WINEDLLOVERRIDES="mscoree,mshtml=d;d3d8,d3d9,d3d10core,d3d11,dxgi=b")
+RESULT="$SMOKE/devices-i686.txt" step d3d11-wined3d-x86 120 "${WINE[@]}" "${WINED3D[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d11
+RESULT="$SMOKE/devices-x86_64.txt" step d3d11-wined3d-x64 120 "${WINE[@]}" "${WINED3D[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d11
 RESULT="$SMOKE/devices-i686.txt" step d3d12-x86 300 "${WINE[@]}" "${GFX[@]}" VKD3D_DEBUG=info "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d12
 RESULT="$SMOKE/devices-x86_64.txt" step d3d12-x64 300 "${WINE[@]}" "${GFX[@]}" VKD3D_DEBUG=info "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d12
 

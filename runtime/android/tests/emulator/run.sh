@@ -45,6 +45,11 @@ adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1
 adb shell cat /sdcard/ui.xml 2>/dev/null | grep -o 'text="[^"]*"' | sed 's/text="//;s/"$//' | grep -v '^$' | head -40 > "$LOGS/first-screen.txt"
 [ -s "$LOGS/first-screen.txt" ]; check first-screen-has-text $? "$LOGS/first-screen.txt"
 
+# The GPU check (gpu_caps.c through JNI) ran on the emulator's own Vulkan driver at start.
+sleep 3
+adb shell run-as "$PKG" cat files/gpu-caps.json > "$LOGS/gpu-caps.json" 2>&1
+grep -q '"vulkan' "$LOGS/gpu-caps.json"; check gpu-check $? "$LOGS/gpu-caps.json"
+
 # Random use: taps, swipes, back, app switches; fixed seed so a failure repeats.
 adb logcat -c
 adb shell monkey -p "$PKG" -s 4242 --throttle 150 --pct-syskeys 5 --pct-appswitch 5 \
@@ -65,6 +70,6 @@ crashes > "$LOGS/crash-restore.log"
 [ ! -s "$LOGS/crash-restore.log" ]; check restart-after-process-death $? "$LOGS/restore-report.log"
 
 adb logcat -d > "$LOGS/logcat.txt" 2>&1
-{ echo "device: $(tr '\n' ' ' < "$LOGS/device.txt")"; cat "$LOGS/summary.txt"; echo "first screen:"; head -12 "$LOGS/first-screen.txt"; } > "$LOGS/report.txt"
+{ echo "device: $(tr '\n' ' ' < "$LOGS/device.txt")"; cat "$LOGS/summary.txt"; echo "GPU check: $(head -c 600 "$LOGS/gpu-caps.json")"; echo "first screen:"; head -12 "$LOGS/first-screen.txt"; } > "$LOGS/report.txt"
 if [ $failed = 0 ]; then annotate notice "Emulator test passed" "$LOGS/report.txt"; else annotate error "Emulator test failed" "$LOGS/report.txt"; fi
 exit $failed

@@ -141,15 +141,26 @@ private fun <T> Choice(options: List<Pair<T, String>>, selected: T, onSelect: (T
 /** Settings every library game has: graphics, on screen and advanced. */
 @Composable
 fun CommonSettings(config: GameConfig, onChange: (GameConfig) -> Unit) {
-    val recommended = PeInspector.recommendedGraphics(config.apis.toSet())
+    val gpu = org.pocketarcade.madeira.platform.GpuCaps.current
+    val ideal = PeInspector.recommendedGraphics(config.apis.toSet())
+    val recommended = org.pocketarcade.madeira.core.GraphicsChoice.fit(ideal, gpu)
     val names = mapOf("wine" to "Wine", "dxvk" to "DXVK", "vkd3d" to "VKD3D")
+    val gpuLine = gpu?.let { "\nGPU: ${it.summary()}." } ?: ""
+    val chosen = if (config.graphics == "auto") recommended else config.graphics
+    val unsupported = when {
+        gpu == null || !gpu.vulkan -> null
+        chosen == "vkd3d" && !gpu.vkd3d -> "This GPU's driver cannot run VKD3D-Proton (missing: ${gpu.vkd3dMissing.take(4).joinToString(", ")})."
+        (chosen == "dxvk" || chosen == "vkd3d") && !gpu.dxvk -> "This GPU's driver cannot run DXVK (missing: ${gpu.dxvkMissing.take(4).joinToString(", ")})."
+        else -> null
+    }
     SettingsSection("Graphics", footer = when (config.graphics) {
         "auto" -> "Auto picks ${names[recommended]} for this game" + (if (config.apis.isNotEmpty()) " (it uses ${config.apis.joinToString(", ")})." else ".") +
+            (org.pocketarcade.madeira.core.GraphicsChoice.reason(ideal, recommended, gpu)?.let { " $it" } ?: "") +
             " DXVK runs Direct3D 8–11 on Vulkan; VKD3D-Proton runs Direct3D 12."
-        "wine" -> "Wine's own Direct3D, for older games and DirectDraw."
-        "dxvk" -> "DXVK runs Direct3D 8–11 on Vulkan."
-        else -> "VKD3D-Proton runs Direct3D 12 on Vulkan, with DXVK for older APIs."
-    }) {
+        "wine" -> "Wine's own Direct3D on Vulkan, for older games, DirectDraw and GPUs DXVK cannot use."
+        "dxvk" -> "DXVK runs Direct3D 8–11 on Vulkan." + (unsupported?.let { " $it" } ?: "")
+        else -> "VKD3D-Proton runs Direct3D 12 on Vulkan, with DXVK for older APIs." + (unsupported?.let { " $it" } ?: "")
+    } + gpuLine) {
         Choice(listOf("auto" to "Auto", "wine" to "Wine", "dxvk" to "DXVK", "vkd3d" to "VKD3D"), config.graphics) { onChange(config.copy(graphics = it)) }
     }
     SettingsSection("On screen") {

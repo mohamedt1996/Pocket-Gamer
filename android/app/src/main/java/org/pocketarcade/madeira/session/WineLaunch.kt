@@ -160,14 +160,19 @@ class WineLaunch private constructor(
             }
             val user = File(prefix, "user.reg")
             if (!user.exists()) {
-                user.writeText(REGISTRY_HEADER + "\n#arch=win64\n\n" + DRIVERS_KEY)
-            } else if (!user.readText().contains("[Software\\\\Wine\\\\Drivers]")) {
-                user.appendText("\n" + DRIVERS_KEY)
+                user.writeText(REGISTRY_HEADER + "\n#arch=win64\n\n" + DRIVERS_KEY + DIRECT3D_KEY)
+            } else {
+                val text = user.readText()
+                if (!text.contains("[Software\\\\Wine\\\\Drivers]")) user.appendText("\n" + DRIVERS_KEY)
+                if (!text.contains("[Software\\\\Wine\\\\Direct3D]")) user.appendText("\n" + DIRECT3D_KEY)
             }
         }
 
         private const val REGISTRY_HEADER = "WINE REGISTRY Version 2\n"
         private const val DRIVERS_KEY = "[Software\\\\Wine\\\\Drivers]\n\"Audio\"=\"directaudio\"\n\"Graphics\"=\"android\"\n\n"
+        // Wine's own Direct3D (wined3d) defaults to desktop OpenGL, which Android does not have
+        // (only OpenGL ES): use its Vulkan renderer, on the phone's GPU.
+        private const val DIRECT3D_KEY = "[Software\\\\Wine\\\\Direct3D]\n\"renderer\"=\"vulkan\"\n\n"
 
         /** Just enough environment for `wineserver -k` to find the prefix's server. */
         fun serverEnvironment(context: Context, root: File, spec: LaunchSpec): HashMap<String, String> = hashMapOf(
