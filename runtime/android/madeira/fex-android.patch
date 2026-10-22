@@ -266,6 +266,24 @@ index 2f55c27..f728347 100644
 -  IosXpFex DATA
    ; madeira-bcd: guest branch history v1
 -  IosGuestBranchTraceLayout DATA
+diff --git a/Source/Windows/Common/JITGuardPage.h b/Source/Windows/Common/JITGuardPage.h
+index 5e51fb1..a0906a9 100644
+--- a/Source/Windows/Common/JITGuardPage.h
++++ b/Source/Windows/Common/JITGuardPage.h
+@@ -5,6 +5,13 @@
+ 
+ namespace FEX::Windows::JITGuardPage {
+ static inline bool HandleJITGuardPage(FEXCore::Core::InternalThreadState* Thread, void* Address, uint64_t* GPRs, __uint128_t* FPRs, uint64_t* PC) {
++#ifdef FEX_ANDROID_HOST
++  // Android: before the first compile sets a guard page it is 0, and a null-pointer fault would
++  // "restart" through a RestartJump that was never set (sp, pc and lr all 0). Not ours then.
++  if (!Thread->JITGuardPage) {
++    return false;
++  }
++#endif
+   if (Address >= reinterpret_cast<void*>(Thread->JITGuardPage) &&
+       Address < reinterpret_cast<void*>(Thread->JITGuardPage + FEXCore::Utils::FEX_PAGE_SIZE)) {
+     FEXCore::UncheckedLongJump::ManuallyLoadJumpBuf(Thread->RestartJump, Thread->JITGuardOverflowArgument, GPRs, FPRs, PC);
 diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
 index 5c7dd86..9359054 100644
 --- a/Source/Windows/WOW64/Module.cpp
