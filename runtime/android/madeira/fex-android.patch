@@ -26,11 +26,46 @@ C-runtime time() in a JIT diagnostic, and no iOS-only exports in the .def.
 
 Built with -DFEX_ANDROID_HOST by runtime/android/build-fex.sh (fex-madeira).
 ---
+diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
+index 3b3c7ac..a8cfe19 100644
+--- a/FEXCore/Source/Interface/Context/Context.h
++++ b/FEXCore/Source/Interface/Context/Context.h
+@@ -426,6 +426,9 @@ public:
+   [[nodiscard]]
+   CompileCodeResult CompileCode(FEXCore::Core::InternalThreadState* Thread, uint64_t GuestRIP, uint64_t MaxInst = 0);
+   uintptr_t CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst = 0);
++#ifdef FEX_ANDROID_HOST
++  uintptr_t CompileBlockImpl(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst);
++#endif
+   uintptr_t CompileSingleStep(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP);
+ 
+   FEXCore::JITSymbols Symbols;
 diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
-index 72bd99e..55705d3 100644
+index 72bd99e..618b1cf 100644
 --- a/FEXCore/Source/Interface/Core/Core.cpp
 +++ b/FEXCore/Source/Interface/Core/Core.cpp
-@@ -2076,7 +2076,7 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
+@@ -1424,7 +1424,20 @@ static void IosMonoTryActivate(ContextImpl* CTX, FEXCore::Core::InternalThreadSt
+ }
+ #endif
+ 
++#ifdef FEX_ANDROID_HOST
+ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst) {
++  static int AndroidCompileTrace;
++  const bool Trace = AndroidCompileTrace++ < 8;
++  if (Trace) LogMan::Msg::EFmt("[android-compile] rip={:#x} frame={} max={}", GuestRIP, static_cast<void*>(Frame), MaxInst);
++  const uintptr_t Ret = CompileBlockImpl(Frame, GuestRIP, MaxInst);
++  if (Trace) LogMan::Msg::EFmt("[android-compile] rip={:#x} -> {:#x}", GuestRIP, Ret);
++  return Ret;
++}
++
++uintptr_t ContextImpl::CompileBlockImpl(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst) {
++#else
++uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst) {
++#endif
+   if constexpr (BLOCK_DEBUGGING) {
+     // Block debugging logic is hand-written and needs to be handled with care.
+     // Force MaxInst to only be one in this case.
+@@ -2076,7 +2089,7 @@ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_
          /* Wall-clock elapsed since first HOT sum — answers "is the game
           * still alive at minute N?" Uses time(NULL) for second resolution. */
          static volatile uint64_t s_start_secs = 0;
@@ -40,7 +75,7 @@ index 72bd99e..55705d3 100644
          uint64_t elapsed = now - s_start_secs;
          LogMan::Msg::EFmt("[HOT sum t={}s] 6fe6={} 6feb={} 28d20={} 28d41={} 28d46={} 687f0={} 68816={} "
 diff --git a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
-index 21eadbe..59332cd 100644
+index 21eadbe..224bbbd 100644
 --- a/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp
 @@ -612,7 +612,8 @@ void Dispatcher::EmitDispatcher() {
@@ -53,6 +88,15 @@ index 21eadbe..59332cd 100644
      /* iOS-Madeira ml325 -- THE #51 ROOT CAUSE.
       *
       * Upstream ends this block with hlt(0) and relies on the signal handler to notice
+@@ -855,7 +856,7 @@ void Dispatcher::EmitDispatcher() {
+   Start = reinterpret_cast<uint64_t>(DispatchPtr);
+   End = GetCursorAddress<uint64_t>();
+ 
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
+   /* iOS-Madeira ml298 (task #52): PUBLISH THE DISPATCHER ADDRESS MAP.
+    *
+    * ml297's [bogus-host] dump proved CompileBlock is reached with the guest RIP taken from x12,
 diff --git a/FEXCore/Source/Interface/Core/LookupCache.cpp b/FEXCore/Source/Interface/Core/LookupCache.cpp
 index 1b93edb..09916a4 100644
 --- a/FEXCore/Source/Interface/Core/LookupCache.cpp
