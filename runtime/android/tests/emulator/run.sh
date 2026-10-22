@@ -41,8 +41,13 @@ crashes > "$LOGS/crash-start.log"
 [ -n "$pid" ] && [ ! -s "$LOGS/crash-start.log" ]; check start $? "$LOGS/start-report.log"
 
 # What the first screen shows (text of every node in the view hierarchy).
-adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1
-adb shell cat /sdcard/ui.xml 2>/dev/null | grep -o 'text="[^"]*"' | sed 's/text="//;s/"$//' | grep -v '^$' | head -40 > "$LOGS/first-screen.txt"
+# uiautomator sometimes dumps before the window is idle (seen on Android 15): retry.
+for attempt in 1 2 3 4; do
+  adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1
+  adb shell cat /sdcard/ui.xml 2>/dev/null | grep -o 'text="[^"]*"' | sed 's/text="//;s/"$//' | grep -v '^$' | head -40 > "$LOGS/first-screen.txt"
+  [ -s "$LOGS/first-screen.txt" ] && break
+  sleep 5
+done
 [ -s "$LOGS/first-screen.txt" ]; check first-screen-has-text $? "$LOGS/first-screen.txt"
 
 # The GPU check (gpu_caps.c through JNI) ran on the emulator's own Vulkan driver at start.
