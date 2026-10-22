@@ -50,8 +50,11 @@ echo '/tmp/cores/core.%p' > /proc/sys/kernel/core_pattern; ulimit -c unlimited
 bash runtime/android/tests/smoke/prefix.sh "\$P"   # as the app writes it before the first start
 L="\$RT/lib/wine/aarch64-unix/wine"
 timeout 1200 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin WINEDLLOVERRIDES=mscoree,mshtml=d \
-  WINEDEBUG=+timestamp,+pid,warn+seh,warn+module,err+all "\$L" wineboot --init > $OUT/probe.out 2> $OUT/probe.log
+  WINEDEBUG=+timestamp,+pid,+seh,+loaddll,warn+module,err+all "\$L" wineboot --init > $OUT/probe.out 2> $OUT/probe.log
 rc=\$?
+# The first access violation of the prefix setup, with what led to it.
+l=\$(grep -n 'dispatch_exception code=c0000005' $OUT/probe.log | head -1 | cut -d: -f1)
+[ -n "\$l" ] && sed -n "\$((l > 80 ? l - 80 : 1)),\$((l + 30))p" $OUT/probe.log | grep -v '^linker\|WARNING: linker' > $OUT/probe-first-av.log
 { echo "wineboot exit \$rc"; grep -v '^linker\|WARNING: linker\|^D \|^I \|iOS-x' $OUT/probe.log | grep -E 'err:|warn:seh|wine:|exception' | tail -30; echo "--- end of log"; grep -v '^linker\|WARNING: linker' $OUT/probe.log | tail -8; } > $OUT/probe.txt
 for c in /tmp/cores/core.*; do [ -f "\$c" ] || continue
   python3 runtime/android/tests/smoke/core.py "\$(readlink -f /proc/1/root\$L 2>/dev/null || echo \$L)" "\$c" > $OUT/probe-core.txt 2>&1; break; done
