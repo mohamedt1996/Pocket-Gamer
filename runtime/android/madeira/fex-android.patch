@@ -11,7 +11,8 @@ turns on the fork's host-independent parts that Madeira's Wine relies on:
   under Wine's exception path falls into CallbackPtr (fork ml325).
 - WoW64: honour WOW64_CPURESERVED_FLAG_RESET_STATE, which is how Madeira's
   wow64 asks for the 32-bit registers to be reloaded.
-- Phone-sized per-thread lookup cache (2 MB L1 cap, 32 MB block arena).
+- Phone-sized per-thread lookup cache (2 MB L1 cap, 32 MB block arena),
+  committed up front as on iOS rather than on its first access violation.
 - ExitToX64: native short-circuit of ARM64EC fast-forward sequences (x18
   TEB, no pool aliases), so an EC function reached through its x64 entry
   stub never enters the emulator.
@@ -54,6 +55,30 @@ index 21eadbe..59332cd 100644
      /* iOS-Madeira ml325 -- THE #51 ROOT CAUSE.
       *
       * Upstream ends this block with hlt(0) and relies on the signal handler to notice
+diff --git a/FEXCore/Source/Interface/Core/LookupCache.cpp b/FEXCore/Source/Interface/Core/LookupCache.cpp
+index 1b93edb..09916a4 100644
+--- a/FEXCore/Source/Interface/Core/LookupCache.cpp
++++ b/FEXCore/Source/Interface/Core/LookupCache.cpp
+@@ -65,7 +65,9 @@ LookupCache::LookupCache(FEXCore::Context::ContextImpl* CTX)
+     // ml606: L1-ONLY. Skip the 16MB L2 table and the 32MB backing arena
+     // entirely — with DisableL2Cache the JIT never emits a lookup against them.
+     AllocationSize = MAX_L1_SIZE;
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
++    /* Android: commit up front as on iOS (the configuration this fork runs), instead of
++     * committing on the first access violation; the kernel still backs pages on touch. */
+     AllocationBase = reinterpret_cast<uintptr_t>(FEXCore::Allocator::VirtualAlloc(AllocationSize, false, true));
+ #else
+     AllocationBase = reinterpret_cast<uintptr_t>(FEXCore::Allocator::VirtualAlloc(AllocationSize, false, false));
+@@ -78,7 +80,7 @@ LookupCache::LookupCache(FEXCore::Context::ContextImpl* CTX)
+     PageMemory = 0;
+   } else {
+     AllocationSize = TotalCacheSize;
+-#ifdef FEX_IOS_HOST
++#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
+     /* iOS-Madeira: commit upfront. The auto-commit-on-access-violation path
+      * (OvercommitTracker.HandleAccessViolation) doesn't take effect cleanly
+      * on iOS — pages stay faulting after VirtualAlloc(MEM_COMMIT) returns.
 diff --git a/FEXCore/Source/Interface/Core/LookupCache.h b/FEXCore/Source/Interface/Core/LookupCache.h
 index ffa2709..b96f959 100644
 --- a/FEXCore/Source/Interface/Core/LookupCache.h
