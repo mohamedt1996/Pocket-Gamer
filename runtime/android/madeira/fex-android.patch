@@ -223,7 +223,7 @@ index 2f55c27..f728347 100644
    ; madeira-bcd: guest branch history v1
 -  IosGuestBranchTraceLayout DATA
 diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
-index 5c7dd86..7afb398 100644
+index 5c7dd86..9359054 100644
 --- a/Source/Windows/WOW64/Module.cpp
 +++ b/Source/Windows/WOW64/Module.cpp
 @@ -420,8 +420,19 @@ extern "C" void IosSweepRegisterThreadEx(FEXCore::Core::InternalThreadState* Thr
@@ -246,3 +246,60 @@ index 5c7dd86..7afb398 100644
    static std::atomic<int8_t> Cached {-1};
    int8_t V = Cached.load(std::memory_order_relaxed);
    if (V < 0) {
+@@ -894,7 +905,15 @@ public:
+       Context::FlushCpuAreaForExit(TLS); // MADEIRA: see ConsumeCpuAreaReset
+ #endif
+       Context::UnlockJITContext(TLS);
++#ifdef FEX_ANDROID_HOST
++      static int AndroidSyscallTrace;
++      const bool Trace = AndroidSyscallTrace++ < 6;
++      if (Trace) LogMan::Msg::EFmt("[android-syscall] #{} eax={:#x} rsp={:#x} ret={:#x} sp={}", AndroidSyscallTrace, EntryRAX, ReturnRSP, ReturnRIP, __builtin_frame_address(0));
++#endif
+       Wow64ProcessPendingCrossProcessItems();
++#ifdef FEX_ANDROID_HOST
++      if (Trace) LogMan::Msg::EFmt("[android-syscall] cross-process items done");
++#endif
+       // wow64.dll reads the argument block directly, so it needs a host pointer. The 32-bit values
+       // *inside* the block stay guest and are converted by wow64.dll's own get_ptr/*_32to64
+       // helpers, which the design makes window-aware.
+@@ -903,7 +922,13 @@ public:
+       ReturnRAX = static_cast<uint64_t>(
+         Wow64SystemServiceEx(static_cast<UINT>(EntryRAX), reinterpret_cast<UINT*>(GuestWindow::ToHost(ReturnRSP + 4))));
+       IosWowUnpark(TD);
++#ifdef FEX_ANDROID_HOST
++      if (Trace) LogMan::Msg::EFmt("[android-syscall] service returned {:#x}", ReturnRAX);
++#endif
+       Context::LockJITContext(TLS);
++#ifdef FEX_ANDROID_HOST
++      if (Trace) LogMan::Msg::EFmt("[android-syscall] back in JIT context");
++#endif
+     }
+     // If a new context has been set, use it directly and don't return to the syscall caller
+     if (Frame->State.rip == (uint64_t)BridgeInstrs::Syscall || Frame->State.rip == (uint64_t)BridgeInstrs::UnixCall) {
+@@ -918,6 +943,13 @@ public:
+ 
+   uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* Frame, FEXCore::HLE::SyscallArguments* Args) override {
+     const auto TLS = GetTLS();
++#ifdef FEX_ANDROID_HOST
++    static int AndroidEntryTrace;
++    if (AndroidEntryTrace++ < 6)
++      LogMan::Msg::EFmt("[android-syscall] enter rip={:#x} entry_context={} sp={:#x} pc={:#x}", Frame->State.rip,
++                        static_cast<void*>(TLS.EntryContext()), TLS.EntryContext() ? TLS.EntryContext()->Sp : 0,
++                        TLS.EntryContext() ? TLS.EntryContext()->Pc : 0);
++#endif
+     // Stash the the context pointer on the stack, as Simulate can be called from this syscall handler which would overwrite it
+     CONTEXT* EntryContext = TLS.EntryContext();
+     // Call the syscall handler with unwind information pointing to Simulate as its caller
+@@ -1710,6 +1742,12 @@ extern "C" void BTCpuSimulateImpl(CONTEXT* entry_context) {
+   // emitted code, so the sweeper must see it as in-simulation again (and any sweep finish).
+   IosWowUnpark(GetFrontendThreadData(TLS.ThreadState()));
+   TLS.EntryContext() = entry_context;
++#ifdef FEX_ANDROID_HOST
++  static int AndroidSimTrace;
++  if (AndroidSimTrace++ < 4)
++    LogMan::Msg::EFmt("[android-sim] enter ctx={} sp={:#x} pc={:#x} rip={:#x}", static_cast<void*>(entry_context), entry_context->Sp,
++                      entry_context->Pc, TLS.ThreadState()->CurrentFrame->State.rip);
++#endif
+   TLS.CachedCallRetSp() = TLS.ThreadState()->CurrentFrame->State.callret_sp;
+ 
+   Context::ScopedJITContextLock Lk {TLS};
