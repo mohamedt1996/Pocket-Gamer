@@ -11,7 +11,7 @@ mkdir -p /newroot
 mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576,ro,cache=loose hostroot /newroot || { echo "vm: 9p root failed"; poweroff -f; }
 for d in /data/data/org.pocketarcade.madeira /var/lib/sudo /var/tmp; do mount -t tmpfs -o size=6g tmpfs "/newroot$d" 2>/dev/null; done
 mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576 vmout /newroot/vmout || echo "vm: output share failed"
-mount -t proc proc /newroot/proc; mount -t sysfs sys /newroot/sys
+mount -t proc proc /newroot/proc || echo "vm: /proc mount failed"; mount -t sysfs sys /newroot/sys
 mount -t devtmpfs dev /newroot/dev; mkdir -p /newroot/dev/pts; mount -t devpts devpts /newroot/dev/pts
 mount -t tmpfs tmpfs /newroot/tmp; mount -t tmpfs tmpfs /newroot/run
 chroot /newroot /bin/bash /vmout/inner.sh

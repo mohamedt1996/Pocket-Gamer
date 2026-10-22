@@ -30,6 +30,11 @@ install -m755 "$HERE/init" "$WORK/initrd/init"
 cat > "$OUT/inner.sh" <<INNER
 #!/bin/bash
 echo "::notice title=16K VM::kernel \$(uname -r), page size \$(getconf PAGESIZE) bytes, bionic \$(cat $OUT/bionic/VERSION)"
+# /proc, /sys and /dev inside the chroot (mounted again here in case PID 1 could not).
+for m in "proc /proc" "sysfs /sys" "devtmpfs /dev" "tmpfs /tmp" "tmpfs /run"; do
+  set -- \$m; mountpoint -q "\$2" || mount -t "\$1" "\$1" "\$2" || echo "::warning title=16K VM::could not mount \$2"
+done
+mkdir -p /dev/pts; mountpoint -q /dev/pts || mount -t devpts devpts /dev/pts
 # Android 15's bionic in place of Android 9's: /system points into the (read-only) Termux
 # tree, so a writable copy is mounted over it.
 S=\$(readlink -f /system); mkdir -p /tmp/system && cp -a "\$S/." /tmp/system/ && mount --bind /tmp/system "\$S"
