@@ -66,28 +66,19 @@ if [ \$rc != 0 ]; then
   l=\$(grep -n 'kernel32' $OUT/probe2.log | head -1 | cut -d: -f1)
   [ -n "\$l" ] && sed -n "\$((l > 15 ? l - 15 : 1)),\$((l + 5))p" $OUT/probe2.log | grep -v '^linker\|WARNING: linker' >> $OUT/probe2.txt
   echo "::error title=16K VM first failing load::\$(head -c 3800 $OUT/probe2.txt | sed ':a;N;\$!ba;s/\n/%0A/g')"
-else
-  # Wine starts: how the first 32- and 64-bit x86 programs map and where they stop.
-  for exe in cli-i686 cli-x86_64; do
-    timeout 900 env -i HOME=/tmp WINEPREFIX=\$P WINELOADER=\$L WINESERVER=\$RT/bin/wineserver WINEDLLPATH=\$RT/lib/wine PATH=\$RT/bin:/system/bin \
-      WINEDEBUG=+pid,+module,+loaddll,+syscall,+seh,err+all "\$L" "$TESTS/\$exe.exe" > $OUT/\$exe.out 2> $OUT/\$exe.log
-    r=\$?
-    { echo "\$exe exit \$r"; head -c 400 $OUT/\$exe.out; echo
-      grep -v '^linker\|WARNING: linker' $OUT/\$exe.log | grep -E 'syswow64.*ntdll|wow-init|REFUSING|Unhandled|c0000005|callret' | head -45; } > $OUT/\$exe.txt
-    echo "::notice title=16K VM \$exe::\$(head -c 3800 $OUT/\$exe.txt | sed ':a;N;\$!ba;s/\n/%0A/g')"
-  done
 fi
 rm -rf "\$RT" /tmp/apk "\$P"
 [ \$rc = 0 ] || exit 1
 bash runtime/android/tests/smoke/run.sh "$APK" "$TESTS" $OUT/logs
 INNER
 
-# TCG's "max" CPU has SVE with a 512-bit default vector length. Phones (and the native
-# runner) have 128-bit SVE, and FEX picks its 256-bit AVX path from the vector length,
-# so give the VM what a phone has.
-# VM_CPU picks a QEMU CPU model instead (a real core's feature set), when QEMU has it.
+# The CPU: VM_CPU names a QEMU model of a real core (the CI uses Neoverse-N1). x86
+# programs under FEX fail on TCG's ARMv9 models (Cortex-A710, and "max" even with
+# 128-bit SVE) on 4 KB and 16 KB kernels and with either bionic alike, while the same
+# build passes natively on the ARMv9 runner (Neoverse-N2): an emulation problem, not
+# one of the runtime. Without VM_CPU: "max" with phone-sized (128-bit) SVE.
 TCG_CPU=max,pauth=off,sve-max-vq=1,sme=off
-if [ -n "${VM_CPU:-}" ] && qemu-system-aarch64 -cpu help | grep -qw "$VM_CPU"; then TCG_CPU=$VM_CPU; fi
+if [ -n "${VM_CPU:-}" ] && qemu-system-aarch64 -cpu help | grep -qw "${VM_CPU%%,*}"; then TCG_CPU=$VM_CPU; fi
 echo "::notice title=VM CPU::$TCG_CPU"
 if [ -w /dev/kvm ] || sudo test -c /dev/kvm; then ACCEL=(-accel kvm -cpu host); echo "using KVM"; else ACCEL=(-accel tcg,thread=multi -cpu "$TCG_CPU"); echo "using TCG (no KVM)"; fi
 sudo timeout "${VM_TIMEOUT:-9000}" qemu-system-aarch64 -M virt "${ACCEL[@]}" -smp 4 -m 12G -nographic -no-reboot \
