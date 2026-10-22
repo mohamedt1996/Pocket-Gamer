@@ -36,7 +36,7 @@ def find_archive():
 
 def magic(path):
     with open(path, 'rb') as f:
-        head = f.read(4096)
+        head = f.read(8192)
     if head[:4] == b'\x3a\xff\x26\xed': return 'sparse'
     if head[512:520] == b'EFI PART': return 'gpt'
     if len(head) >= 1082 and head[1080:1082] == b'\x53\xef': return 'ext4'
@@ -113,7 +113,7 @@ def system_partition(img, work):
         return system_partition(raw, work)
     if kind == 'gpt':
         parts = gpt_partitions(img); log('gpt', [(n, s) for n, o, s in parts])
-        name, off, size = next((p for p in parts if p[0].startswith('system')), max(parts, key=lambda p: p[2]))
+        name, off, size = next((p for p in parts if p[0].startswith('system')), None) or max(parts, key=lambda p: p[2])
         part = work / f'{name}.img'; cut(img, part, [(off, size)]); img.unlink()
         return system_partition(part, work)
     if kind == 'super':
