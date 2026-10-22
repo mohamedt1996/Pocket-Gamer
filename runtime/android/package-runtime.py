@@ -150,7 +150,9 @@ print('Added RUNPATH to',len(added),'libraries:',', '.join(added))
 unaligned=[p.relative_to(stage).as_posix() for p in sorted(stage.rglob('*'))
            if p.is_file() and p.read_bytes()[:4]==b'\x7fELF' and (lambda a: a and min(a)<0x4000)(elf_dynamic(p.read_bytes())[2])]
 for rel in unaligned:
-    print(f'::warning::{rel} is not 16 KB page aligned; it will not load on 16 KB page devices')
+    print(f'::error::{rel} is not 16 KB page aligned; it will not load on 16 KB page devices')
+if unaligned:
+    raise SystemExit('16 KB page devices (Android 15+) cannot run: ' + ', '.join(unaligned))
 
 # Wine dlopen()s these by the name configure recorded (android-sonames.py).
 # Android has only the unversioned system libraries.

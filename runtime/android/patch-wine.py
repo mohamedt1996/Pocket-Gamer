@@ -28,6 +28,16 @@ def replace(path, old, new):
 
 
 
+# 16 KB page kernels (Android 15+ devices) refuse to exec an ELF whose segments are 4 KB
+# aligned, and for the static wine-preloader the kernel finds out after the point of no
+# return: every process Wine starts (wineboot, explorer, the game) died with SIGSEGV. Its
+# text address (0x7d400000) is already 16 KB aligned; only the segment alignment was missing.
+# The preloader reads the real page size from AT_PAGESZ, so nothing else depends on it.
+for script in ('configure.ac', 'configure'):   # builds may regenerate configure
+    replace(script,
+            'WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"',
+            'WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000 -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"')
+
 # Wine's host winebuild otherwise discovers Ubuntu's LLVM 18 dlltool even
 # when the Android cross-compiler uses the pinned llvm-mingw toolchain.
 # Honour an explicit DLLTOOL in the host generator, fail-closed if missing.
