@@ -9,8 +9,6 @@ turns on the fork's host-independent parts that Madeira's Wine relies on:
 
 - Dispatcher: after SleepThread, resume the guest instead of hlt(0), which
   under Wine's exception path falls into CallbackPtr (fork ml325).
-- WoW64: honour WOW64_CPURESERVED_FLAG_RESET_STATE, which is how Madeira's
-  wow64 asks for the 32-bit registers to be reloaded.
 - Phone-sized per-thread lookup cache (2 MB L1 cap, 32 MB block arena),
   committed up front as on iOS rather than on its first access violation.
 - ExitToX64: native short-circuit of ARM64EC fast-forward sequences (x18
@@ -225,7 +223,7 @@ index 2f55c27..f728347 100644
    ; madeira-bcd: guest branch history v1
 -  IosGuestBranchTraceLayout DATA
 diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
-index 5c7dd86..729d80b 100644
+index 5c7dd86..7afb398 100644
 --- a/Source/Windows/WOW64/Module.cpp
 +++ b/Source/Windows/WOW64/Module.cpp
 @@ -420,8 +420,19 @@ extern "C" void IosSweepRegisterThreadEx(FEXCore::Core::InternalThreadState* Thr
@@ -248,39 +246,3 @@ index 5c7dd86..729d80b 100644
    static std::atomic<int8_t> Cached {-1};
    int8_t V = Cached.load(std::memory_order_relaxed);
    if (V < 0) {
-@@ -716,7 +727,7 @@ bool HandleUnalignedAccess(TLS TLS, CONTEXT* Context) {
-   return Result.has_value();
- }
- 
--#ifdef FEX_IOS_HOST
-+#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
- /* MADEIRA: the CPU area is the 32-bit register state other threads see and set.
-  *
-  * Wine keeps a WOW64_CPURESERVED header ({ USHORT Flags; USHORT Machine; }) at
-@@ -772,7 +783,7 @@ void LockJITContext(TLS TLS) {
-   } while (!TLS.ControlWord().compare_exchange_weak(Expected, New, std::memory_order::relaxed));
-   std::atomic_signal_fence(std::memory_order::seq_cst);
- 
--#ifdef FEX_IOS_HOST
-+#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
-   // MADEIRA: a context set from outside (see ConsumeCpuAreaReset) counts as a dirty CPU area.
-   if (TLS.TEB == CurrentTEB() && ConsumeCpuAreaReset(TLS.TEB)) {
-     Expected |= ControlBits::WOW_CPU_AREA_DIRTY;
-@@ -870,7 +881,7 @@ public:
-       ReturnRSP += sizeof(StackLayout);
- 
-       const auto TLS = GetTLS();
--#ifdef FEX_IOS_HOST
-+#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
-       Context::FlushCpuAreaForExit(TLS); // MADEIRA: see ConsumeCpuAreaReset
- #endif
-       Context::UnlockJITContext(TLS);
-@@ -890,7 +901,7 @@ public:
-       const uint64_t EntryRAX = Frame->State.gregs[FEXCore::X86State::REG_RAX];
- 
-       const auto TLS = GetTLS();
--#ifdef FEX_IOS_HOST
-+#if defined(FEX_IOS_HOST) || defined(FEX_ANDROID_HOST)
-       Context::FlushCpuAreaForExit(TLS); // MADEIRA: see ConsumeCpuAreaReset
- #endif
-       Context::UnlockJITContext(TLS);
