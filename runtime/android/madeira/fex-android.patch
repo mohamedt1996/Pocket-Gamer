@@ -24,6 +24,13 @@ turns on the fork's host-independent parts that Madeira's Wine relies on:
   binds FEX's imports to the native implementations already, and the plain
   lookup turned those into ntdll's base address.
 
+- Guards that hold on 16 KB page kernels, where Wine merges the 4 KB
+  protections of each host page so a lone 4 KB no-access page stays
+  accessible: call-ret stack guards of 64 KB (an imbalance in the WoW64
+  module, which has no inline bounds check, ran past the allocation instead
+  of being reset), and a 64 KB inaccessible tail behind the JIT buffer's
+  guard page (an overflow faulted past the page the restart handler checks).
+
 - No implicit thread-local storage in the Windows modules (IR capture mark,
   allocation watch), as the fork already does on iOS: in the WoW64 module the
   64-bit TEB has no ThreadLocalStoragePointer, so the first block compile of
@@ -142,6 +149,39 @@ index b1031f9..29c6eb3 100644
  #else
      static thread_local char Anchor {};
      return reinterpret_cast<uint64_t>(&Anchor);
+diff --git a/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h b/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
+index 1c0c8b8..0df7a48 100644
+--- a/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
++++ b/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
+@@ -16,6 +16,16 @@
+ #include <type_traits>
+ 
+ namespace FEXCore::Utils {
++#ifdef _WIN32
++// The Windows modules run under Wine, and on a 16 KB page kernel Wine applies the union of the 4 KB
++// protections inside each host page: a 4 KB guard page next to writable memory does not fault. An
++// inaccessible 64 KB tail behind the guard page (the allocation granularity, a whole number of host
++// pages at any page size) makes an overflow fault in memory the guard handler recognises.
++static constexpr size_t GuardTailSize = 0x10000;
++#else
++static constexpr size_t GuardTailSize = 0;
++#endif
++
+ /**
+  * @brief An intrusive thread pool allocator
+  *
+@@ -416,9 +426,9 @@ public:
+ 
+ private:
+   void* Alloc(size_t Size) override {
+-    auto Ptr = FEXCore::Allocator::VirtualAlloc(Size);
++    auto Ptr = FEXCore::Allocator::VirtualAlloc(Size + GuardTailSize);
+     uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Ptr) + Size - 1, FEXCore::Utils::FEX_PAGE_SIZE);
+-    if (!FEXCore::Allocator::VirtualProtect(reinterpret_cast<void*>(LastPageAddr), FEXCore::Utils::FEX_PAGE_SIZE,
++    if (!FEXCore::Allocator::VirtualProtect(reinterpret_cast<void*>(LastPageAddr), FEXCore::Utils::FEX_PAGE_SIZE + GuardTailSize,
+                                             FEXCore::Allocator::ProtectOptions::None)) {
+       LogMan::Msg::EFmt("Failed to mprotect last page of code buffer.");
+     }
 diff --git a/Source/Windows/ARM64EC/Module.S b/Source/Windows/ARM64EC/Module.S
 index 668b1d2..88605ff 100644
 --- a/Source/Windows/ARM64EC/Module.S
@@ -263,11 +303,70 @@ index 2f55c27..f728347 100644
 -  IosXpFex DATA
    ; madeira-bcd: guest branch history v1
 -  IosGuestBranchTraceLayout DATA
+diff --git a/Source/Windows/Common/CallRetStack.h b/Source/Windows/Common/CallRetStack.h
+index fa4a2f7..288ac86 100644
+--- a/Source/Windows/Common/CallRetStack.h
++++ b/Source/Windows/Common/CallRetStack.h
+@@ -15,6 +15,17 @@ extern uintptr_t ios_fex_band_end;
+ }
+ 
+ namespace FEX::Windows::CallRetStack {
++#ifdef FEX_ANDROID_HOST
++// Android: the guard regions must be inaccessible at the host's page size, which on newer kernels
++// is 16 KB. Wine applies the union of the 4 KB protections inside a host page, so a 4 KB no-access
++// page next to the committed stack stays readable and writable and an imbalance runs past the
++// allocation instead of faulting in its guard (the WoW64 module has no inline bounds check). The
++// allocation granularity covers any host page size.
++static constexpr uint64_t CallRetGuardSize = 0x10000;
++#else
++static constexpr uint64_t CallRetGuardSize = FEXCore::Utils::FEX_PAGE_SIZE;
++#endif
++
+ struct CallRetStackInfo {
+   uint64_t AllocationBase;
+   uint64_t AllocationEnd;
+@@ -24,7 +35,7 @@ struct CallRetStackInfo {
+ CallRetStackInfo GetInfoThread(FEXCore::Core::InternalThreadState* Thread) {
+   uint64_t Base = reinterpret_cast<uint64_t>(Thread->CallRetStackBase);
+   // Leave some room from the base for the default location to allow for underflows without constant exceptions
+-  return {Base - FEXCore::Utils::FEX_PAGE_SIZE, Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + FEXCore::Utils::FEX_PAGE_SIZE,
++  return {Base - CallRetGuardSize, Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + CallRetGuardSize,
+           Base + FEXCore::Core::InternalThreadState::CALLRET_DEFAULT_OFFSET};
+ }
+ 
+@@ -88,7 +99,7 @@ bool InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+ #endif
+ 
+   // Allocate the call-ret stack with guard pages on both sides
+-  const size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE;
++  const size_t CallRetStackAllocSize = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * CallRetGuardSize;
+   const void* CallRetStackAlloc = nullptr;
+ #ifdef FEX_IOS_HOST
+   /* iOS-Madeira ml324: steer the call-ret stack out of the guest VA band.
+@@ -140,11 +151,11 @@ bool InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+   }
+ 
+   FEXCore::Allocator::VirtualName("FEXMem_CallRetStacks", CallRetStackAlloc,
+-                                  FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE);
+-  FEXCore::Allocator::VirtualTHPControl(CallRetStackAlloc, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE,
++                                  FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * CallRetGuardSize);
++  FEXCore::Allocator::VirtualTHPControl(CallRetStackAlloc, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * CallRetGuardSize,
+                                         FEXCore::Allocator::THPControl::Disable);
+ 
+-  Thread->CallRetStackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + FEXCore::Utils::FEX_PAGE_SIZE);
++  Thread->CallRetStackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + CallRetGuardSize);
+   /* The COMMIT can fail on its own: the reservation only claims addresses.
+    * Hand the reservation back rather than leaking a 16MB hole in a band that
+    * is already too small to satisfy the next thread. */
 diff --git a/Source/Windows/Common/JITGuardPage.h b/Source/Windows/Common/JITGuardPage.h
-index 5e51fb1..a0906a9 100644
+index 5e51fb1..9fc1031 100644
 --- a/Source/Windows/Common/JITGuardPage.h
 +++ b/Source/Windows/Common/JITGuardPage.h
-@@ -5,6 +5,13 @@
+@@ -2,11 +2,19 @@
+ #pragma once
+ #include <FEXCore/Debug/InternalThreadState.h>
+ #include <FEXCore/Utils/LongJump.h>
++#include <FEXCore/Utils/ThreadPoolAllocator.h>
  
  namespace FEX::Windows::JITGuardPage {
  static inline bool HandleJITGuardPage(FEXCore::Core::InternalThreadState* Thread, void* Address, uint64_t* GPRs, __uint128_t* FPRs, uint64_t* PC) {
@@ -279,8 +378,11 @@ index 5e51fb1..a0906a9 100644
 +  }
 +#endif
    if (Address >= reinterpret_cast<void*>(Thread->JITGuardPage) &&
-       Address < reinterpret_cast<void*>(Thread->JITGuardPage + FEXCore::Utils::FEX_PAGE_SIZE)) {
+-      Address < reinterpret_cast<void*>(Thread->JITGuardPage + FEXCore::Utils::FEX_PAGE_SIZE)) {
++      Address < reinterpret_cast<void*>(Thread->JITGuardPage + FEXCore::Utils::FEX_PAGE_SIZE + FEXCore::Utils::GuardTailSize)) {
      FEXCore::UncheckedLongJump::ManuallyLoadJumpBuf(Thread->RestartJump, Thread->JITGuardOverflowArgument, GPRs, FPRs, PC);
+     return true;
+   }
 diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
 index 5c7dd86..729d80b 100644
 --- a/Source/Windows/WOW64/Module.cpp

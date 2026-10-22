@@ -10,6 +10,11 @@ OUT="$ROOT/.android-out/$FEX_COMPONENT"
 export PATH="$LLVM_MINGW/bin:$PATH"
 python3 "$ROOT/runtime/android/fetch.py" "$FEX_SOURCE" "$WORK"
 HOST_FLAGS=()
+if [ "$FEX_COMPONENT" = fex ]; then
+  # Guard regions that also hold on 16 KB page kernels (see the patch).
+  git -C "$WORK" checkout -q -- .
+  git -C "$WORK" apply "$ROOT/runtime/android/patches/fex-16k-guards.patch"
+fi
 if [ "$FEX_COMPONENT" = fex-madeira ]; then
   git -C "$WORK" checkout -q -- .
   git -C "$WORK" apply "$ROOT/runtime/android/madeira/fex-android.patch"
