@@ -3,6 +3,7 @@ name: Android Linux Proton APK
 on:
   push:
     branches: [main]
+    tags: ['android-proton-v*']
   workflow_dispatch:
     inputs:
       publish_release:
@@ -85,7 +86,9 @@ jobs:
           retention-days: 30
 
   release:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref == 'refs/heads/main'
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/android-proton-v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref == 'refs/heads/main')
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -105,7 +108,11 @@ jobs:
         run: |
           set -euo pipefail
           (cd release-assets && sha256sum -c SHA256SUMS.txt)
-          tag="android-proton-${GITHUB_RUN_NUMBER}"
+          if [[ "$GITHUB_REF" == refs/tags/android-proton-v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="android-proton-${GITHUB_RUN_NUMBER}"
+          fi
           if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
             echo "Release $tag already exists" >&2
             exit 1

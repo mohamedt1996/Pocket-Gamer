@@ -27,8 +27,9 @@ use the three **Import .tar.gz** buttons to select existing packages:
 GitHub Actions runs the same build in **Android Linux Proton APK** on pushes to
 `main`, and the downloadable **PocketArcade-Android-Linux-Proton** build artifact
 contains the APK, the separate Proton and rootfs archives, Box64, the manifest,
-setup notes, and `SHA256SUMS.txt`. From the Actions page, run this workflow on
-`main` with **publish_release** enabled to publish those files as a pre-release.
+setup notes, and `SHA256SUMS.txt`. Push an `android-proton-v*` tag to build and
+publish those files as a pre-release. Alternatively, from the Actions page run
+this workflow on `main` with **publish_release** enabled.
 The release assets remain available after the temporary Actions artifact expires.
 The workflow verifies the APK signature, 16 KB native library alignment, and
 archive bytes before publishing.
