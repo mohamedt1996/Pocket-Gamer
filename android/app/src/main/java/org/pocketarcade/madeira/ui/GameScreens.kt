@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -50,6 +51,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -169,15 +171,22 @@ fun CommonSettings(config: GameConfig, onChange: (GameConfig) -> Unit) {
         ToggleRow("Performance overlay", config.performance, "Frame rate in the corner, and DXVK's HUD.") { onChange(config.copy(performance = it)) }
     }
     SettingsSection("Frame cap", footer = when (config.frameCap) {
-        "auto" -> "60 frames per second, or 30 in Android's battery game mode. Frames the game does not draw are heat the phone does not make."
+        "auto" -> "60 frames per second, or 30 when Android power saver or battery game mode is on at launch. Applies to DXVK and VKD3D-Proton."
         "off" -> "No cap: the game draws as fast as it can. Fastest, and hottest."
         else -> "At most ${config.frameCap} frames per second (DXVK and VKD3D-Proton)."
     }) {
-        Choice(listOf("auto" to "Auto", "30" to "30", "40" to "40", "60" to "60", "off" to "Off"), config.frameCap) { onChange(config.copy(frameCap = it)) }
+        FlowRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            org.pocketarcade.madeira.core.Performance.FRAME_CAPS.forEach { cap ->
+                FilterChip(selected = config.frameCap == cap,
+                    onClick = { onChange(config.copy(frameCap = cap)) },
+                    label = { Text(when (cap) { "auto" -> "Auto"; "off" -> "Off"; else -> cap }) })
+            }
+        }
     }
     SettingsSection("CPU", footer = when (config.cpuMode) {
         "compatible" -> "Stricter x86 emulation for games that glitch or crash in Balanced. Uses more CPU."
-        "fast" -> "Skips x86 memory-ordering emulation and uses faster, less precise x87 math. Much less CPU and heat, but some games crash or misbehave: use it for games that run well."
+        "fast" -> "Skips x86 memory-ordering emulation and reduces x87 precision. May reduce translation work, but some games crash or misbehave. Compare performance and stability with Balanced."
         else -> "FEX's own defaults: the best mix of speed and compatibility."
     }) {
         Choice(listOf("compatible" to "Compatible", "balanced" to "Balanced", "fast" to "Fast"), config.cpuMode) { onChange(config.copy(cpuMode = it)) }

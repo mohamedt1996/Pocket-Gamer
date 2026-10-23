@@ -20,18 +20,22 @@ int main(int argc, char **argv)
     D3D_FEATURE_LEVEL level = 0;
     HRESULT hr = S_OK;
     if (want11) {
+    out("INFO creating d3d11 device");
     hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &dev11, &level, NULL);
     if (SUCCEEDED(hr)) {
+        out("INFO created d3d11 device; querying adapter");
         IDXGIDevice *dxgi = NULL;
         IDXGIAdapter *adapter = NULL;
         DXGI_ADAPTER_DESC desc = {0};
         if (SUCCEEDED(ID3D11Device_QueryInterface(dev11, &IID_IDXGIDevice, (void **)&dxgi)) &&
             SUCCEEDED(IDXGIDevice_GetAdapter(dxgi, &adapter)) && SUCCEEDED(IDXGIAdapter_GetDesc(adapter, &desc)))
             out("INFO adapter %ls vendor %04x device %04x", desc.Description, desc.VendorId, desc.DeviceId);
-        if (adapter) IDXGIAdapter_Release(adapter);
-        if (dxgi) IDXGIDevice_Release(dxgi);
+        if (adapter) { out("INFO releasing d3d11 adapter"); IDXGIAdapter_Release(adapter); }
+        if (dxgi) { out("INFO releasing dxgi device"); IDXGIDevice_Release(dxgi); }
         out("PASS d3d11 device (feature level %x)", level);
+        out("INFO releasing d3d11 device");
         ID3D11Device_Release(dev11);
+        out("INFO released d3d11 device");
     } else {
         out("FAIL d3d11 device: hr %08lx", hr);
         failures++;

@@ -17,6 +17,10 @@ What the app does:
 - **Downloads** from Steam's CDN (port of SwiftSteam: PICS, depot keys,
   manifests, AES + VZ/VSZa/zip chunks, resumable journals, `.acf` records),
   in a foreground service, with pause, resume, update, check files and uninstall.
+- **Epic Games** browser sign-in, Windows library browsing and search, verified
+  downloads with pause/resume, updates, prerequisites and game launch. Epic
+  tokens use a separate Android Keystore vault. See [Epic integration and
+  component provenance](EPIC-UPSTREAM.md) for scope and test limits.
 - **Steam Cloud** saves: sync before and after a session, conflicts resolved by
   your choice, replaced copies kept as backups.
 - **Madeira Dock**: Steam games start through Valve's own client (downloaded
@@ -150,13 +154,15 @@ does not have.)
 
 ### Heat and CPU
 
-- **Frame cap** per game (`core/Performance.kt`): Auto = 60 fps, or 30 in
-  Android's battery game mode; 30/40/60/off by hand. DXVK reads it from
+- **Frame cap** per game (`core/Performance.kt`): Auto = 60 fps, or 30 when
+  Android's battery game mode or system power saver is on at session start;
+  30/40/45/48/60/off by hand. 48 fps is an even divisor of 144 Hz when the
+  tablet actually holds that display refresh rate. DXVK reads it from
   `DXVK_CONFIG`, VKD3D-Proton from `VKD3D_FRAME_RATE`. DXVK compiles shaders on
   three threads instead of one per core.
 - **CPU mode** per game: Balanced (FEX's defaults), Compatible (stricter
   vector/memcpy ordering) or Fast (no x86 memory-ordering emulation, reduced
-  x87 precision: much less CPU, for games that tolerate it). Set through
+  x87 precision: less translation work, with device/game-specific results). Set through
   FEX's `FEX_<OPTION>` environment, which its Windows modules read.
 - **Steady performance** (Settings › Heat, on by default): Android's sustained
   performance mode for the game window where the phone supports it.
@@ -206,6 +212,34 @@ The 32-bit Direct3D 11 device check sometimes hangs after its device was
 created (seen in about one run in four, natively and in the VM):
 every thread of the program waits and lavapipe's threads are idle. It has not
 been diagnosed yet.
+
+On a prepared ARM64 runtime-test runner, set `SMOKE_D3D11_ITERATIONS=20`
+when calling `runtime/android/tests/smoke/run.sh` to repeat x86 and x64 device
+creation/release in fresh processes. Each iteration keeps separate logs and
+stops on the first failure; a later pass cannot erase a failure. Device logs
+identify adapter, DXGI-device and D3D11-device releases separately. This is an
+opt-in diagnostic, not a fix or a claim that the hang is gone.
+
+See [Mi Pad 7 testing and translator research](RUNTIME-DEVELOPMENT.md) for the
+measurement plan and the FEX/WoWBox64 investigation.
+
+Epic games can select the bundled FEX for x86 or an optional, pinned WoWBox64
+component in a separate prefix; x64 continues to use FEX. WoWBox64 has not yet
+been run on the Mi Pad 7. Epic manifests keep the game's normal launcher and
+EOS launch parameters. Rocket League's Easy Anti-Cheat online path remains
+unverified on Android and requires device testing and a compatible host bridge.
+An optional EAC loader trace records stage flags for a device run without
+copying sensitive Wine log lines into its report. See
+[the EAC validation boundary](EPIC-UPSTREAM.md#eac-status-and-validation-boundary).
+An experimental, checksum-pinned Android Box64 component can be installed and
+probed separately as a prerequisite for the optional Linux Proton path. The
+installer uses an upstream 4 KB build or the bundled 16 KB-aligned build based
+on the Android kernel page size. Its
+presence does not enable Rocket League EAC. The separate
+[optional Linux Proton path](LINUX-PROTON.md) imports complete x86-64 Linux and
+Proton archives, launches through Box64 against an external X11 display, and
+passes an official EAC runtime. Device execution and online EAC acceptance
+remain unverified.
 
 Wine's legacy Android driver uses private native-window interfaces and a legacy
 loader search-path hook. Modern device/vendor compatibility is not established.

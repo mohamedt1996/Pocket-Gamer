@@ -18,6 +18,11 @@ import android.widget.Toast
 object Thermals {
     private const val TAG = "PocketThermals"
 
+    /** System battery saver is independent of the game dashboard's battery mode. */
+    fun powerSaveMode(context: Context): Boolean = try {
+        context.getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
+    } catch (_: RuntimeException) { false }
+
     /** Android's game mode for this app is "battery" (Android 12+; the user picks it in
      *  the system's game dashboard or the phone maker's game booster). */
     fun batteryGameMode(context: Context): Boolean {
@@ -38,7 +43,9 @@ object Thermals {
             val sustained = spec.steadyPerformance && power.isSustainedPerformanceModeSupported
             if (sustained) activity.window.setSustainedPerformanceMode(true)
             Log.i(TAG, "sustained performance mode: " + (if (sustained) "on" else if (spec.steadyPerformance) "not supported" else "off") +
-                ", battery game mode: ${batteryGameMode(activity)}")
+                ", battery game mode: ${batteryGameMode(activity)}, power saver: ${power.isPowerSaveMode}")
+            Log.i(TAG, "device: ${Build.MANUFACTURER} ${Build.MODEL}, Android API ${Build.VERSION.SDK_INT}; " +
+                "launch: graphics=${spec.graphics}, frame cap=${spec.frameCap}, CPU mode=${spec.cpuMode}")
             if (Build.VERSION.SDK_INT >= 29) {
                 var warned = false
                 power.addThermalStatusListener(activity.mainExecutor) { status ->

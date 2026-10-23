@@ -32,6 +32,8 @@ android {
         )
     }
     buildFeatures { compose = true; buildConfig = true }
+    // These payloads are already gzip-compressed. Recompressing them wastes heap and CPU.
+    androidResources { noCompress += "tgz" }
     packaging { resources { excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1", "META-INF/*.kotlin_module") } }
     testOptions { unitTests.isReturnDefaultValues = true }
 }
@@ -47,8 +49,10 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("com.google.zxing:core:3.5.3")
+    implementation("com.jakewharton.timber:timber:5.0.1")
     testImplementation("junit:junit:4.13.2")
     // Real org.json in unit tests (Android's is a stub there).
     testImplementation("org.json:json:20240303")

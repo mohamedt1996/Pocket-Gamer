@@ -8,16 +8,16 @@ package org.pocketarcade.madeira.core
 
 object Performance {
     /** Frame cap choices: "auto", a number of frames per second, or "off". */
-    val FRAME_CAPS = listOf("auto", "30", "40", "45", "60", "off")
+    val FRAME_CAPS = listOf("auto", "30", "40", "45", "48", "60", "off")
 
     /** CPU translation modes: "compatible", "balanced" (FEX's defaults) or "fast". */
     val CPU_MODES = listOf("compatible", "balanced", "fast")
 
-    /** Frames per second for a choice; 0 means no cap. "auto" is 60, or 30 when Android's
-     *  game mode is "battery". */
-    fun frameCap(choice: String, batteryMode: Boolean): Int = when (choice) {
+    /** Frames per second for a choice; 0 means no cap. Evaluated when a session starts.
+     *  "auto" is 60, or 30 in Android's battery game mode or system power saver. */
+    fun frameCap(choice: String, batteryMode: Boolean, powerSaveMode: Boolean = false): Int = when (choice) {
         "off" -> 0
-        "auto" -> if (batteryMode) 30 else 60
+        "auto" -> if (batteryMode || powerSaveMode) 30 else 60
         else -> choice.toIntOrNull()?.takeIf { it in 10..240 } ?: 60
     }
 

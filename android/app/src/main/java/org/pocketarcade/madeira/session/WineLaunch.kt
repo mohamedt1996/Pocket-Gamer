@@ -46,6 +46,11 @@ data class LaunchSpec(
     val frameCap: String = "auto",
     val cpuMode: String = "balanced",
     val steadyPerformance: Boolean = true,
+    /** Optional x86 translator; x64 stays on the bundled FEX ARM64EC module. */
+    val translator32: String = "fex",
+    /** App-private, credential-free Epic EAC report and optional Wine loader trace. */
+    val eacReport: String? = null,
+    val eacDiagnostics: Boolean = false,
 ) {
     fun toJson(): String = JSONObject().apply {
         put("home", home); put("command", command); put("workingDir", workingDir); put("title", title)
@@ -55,6 +60,8 @@ data class LaunchSpec(
         dockReport?.let { put("dockReport", it) }; dockInstallerResults?.let { put("dockInstallerResults", it) }
         put("diagnostics", diagnostics)
         put("frameCap", frameCap); put("cpuMode", cpuMode); put("steadyPerformance", steadyPerformance)
+        put("translator32", translator32)
+        eacReport?.let { put("eacReport", it) }; put("eacDiagnostics", eacDiagnostics)
     }.toString()
 
     companion object {
@@ -74,6 +81,8 @@ data class LaunchSpec(
                 diagnostics = o.optBoolean("diagnostics"),
                 frameCap = o.optString("frameCap", "auto"), cpuMode = o.optString("cpuMode", "balanced"),
                 steadyPerformance = o.optBoolean("steadyPerformance", true),
+                translator32 = o.optString("translator32", "fex").also { require(it in listOf("fex", "wowbox64")) },
+                eacReport = o.optString("eacReport", "").ifEmpty { null }, eacDiagnostics = o.optBoolean("eacDiagnostics"),
             )
         }
 
@@ -104,6 +113,7 @@ class WineLaunch private constructor(
                 ?: legacy(activity, intent).also { intent.putExtra(LaunchSpec.EXTRA, it.toJson()) }
             val runtime = PortRuntime(activity)
             runtime.installBundled()
+            if (spec.eacDiagnostics && spec.eacReport != null) File(spec.home, "wine.log").delete()
             val env = environment(activity, runtime.root(), spec)
             NativeEnvironment.prepare(env["LD_LIBRARY_PATH"], spec.workingDir.ifEmpty { spec.home }, env["TMPDIR"])
             SessionState.markRunning(activity, spec)
@@ -209,6 +219,7 @@ class WineLaunch private constructor(
             prefix.mkdirs(); tmp.mkdirs()
             prepareDrives(prefix)
             seedRegistry(prefix)
+            org.pocketarcade.madeira.epic.RuntimeComponents.configure(context, prefix, spec.translator32)
             val system32 = File(prefix, "drive_c/windows/system32")
             val syswow64 = File(prefix, "drive_c/windows/syswow64")
             val env = HashMap<String, String>()
@@ -223,7 +234,9 @@ class WineLaunch private constructor(
             env["WINEDLLPATH"] = File(root, "lib/wine").absolutePath
             env["WINEDEBUGLOG"] = File(home, "wine.log").absolutePath
             // +seh traces every exception a game raises (many do so constantly): diagnostics only.
-            env["WINEDEBUG"] = if (spec.diagnostics) "+timestamp,+pid,+seh,+loaddll,warn+all" else "+timestamp,+pid"
+            env["WINEDEBUG"] = if (spec.diagnostics) "+timestamp,+pid,+seh,+loaddll,warn+all"
+                else if (spec.eacDiagnostics) "+timestamp,+pid,+loaddll,warn+module"
+                else "+timestamp,+pid"
             env["LD_LIBRARY_PATH"] = File(root, "lib").absolutePath + ":" + File(root, "lib/wine/aarch64-unix").absolutePath + ":" + context.applicationInfo.nativeLibraryDir
             env["PATH"] = File(root, "bin").absolutePath + ":/system/bin"
             env["LC_ALL"] = "C.UTF-8"; env["LANG"] = "C.UTF-8"
@@ -270,7 +283,8 @@ class WineLaunch private constructor(
             env["VKD3D_LOG_FILE"] = File(home, "vkd3d.log").absolutePath
             if (spec.performance) env["DXVK_HUD"] = "fps,frametimes,gpuload"
             // Frame cap and CPU translation mode (core.Performance); the game's own environment wins.
-            val cap = org.pocketarcade.madeira.core.Performance.frameCap(spec.frameCap, Thermals.batteryGameMode(context))
+            val cap = org.pocketarcade.madeira.core.Performance.frameCap(spec.frameCap,
+                Thermals.batteryGameMode(context), Thermals.powerSaveMode(context))
             env.putAll(org.pocketarcade.madeira.core.Performance.environment(cap, spec.cpuMode))
             for ((k, v) in spec.environment) env[k] = v
             return env

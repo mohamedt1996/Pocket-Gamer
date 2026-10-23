@@ -23,6 +23,13 @@ PREFIX="$GAME/prefix"
 TERMUX=/data/data/com.termux/files/usr
 mkdir -p "$LOGS"
 failed=0
+# Repeat the intermittent D3D11 create/release hang without retrying a failure
+# into a pass. Each iteration has its own logs; default CI cost stays unchanged.
+D3D11_ITERATIONS=${SMOKE_D3D11_ITERATIONS:-1}
+if ! [[ "$D3D11_ITERATIONS" =~ ^([1-9]|[1-9][0-9]|100)$ ]]; then
+  echo "SMOKE_D3D11_ITERATIONS must be an integer from 1 to 100" >&2
+  exit 2
+fi
 
 annotations=0
 annotate() { # level title file
@@ -239,8 +246,13 @@ RESULT="$SMOKE/vk-x86_64.txt" step vk-x64 90 "${WINE[@]}" "${GFX[@]}" WINEDEBUG=
 # Regression check for the win32u Vulkan self-deadlock: started on its own, without the
 # desktop, the program loads the display driver from inside Vulkan initialisation.
 RESULT="$SMOKE/vk-x86_64.txt" step vk-x64-standalone 90 "${WINE[@]}" "${GFX[@]}" "$LOADER" 'C:\smoke\vk-x86_64.exe'
-RESULT="$SMOKE/devices-i686.txt" step d3d11-x86 120 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d11
-RESULT="$SMOKE/devices-x86_64.txt" step d3d11-x64 120 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d11
+for ((iteration = 1; iteration <= D3D11_ITERATIONS; iteration++)); do
+  suffix=; [ "$D3D11_ITERATIONS" -gt 1 ] && suffix="-$iteration"
+  iteration_failed=0
+  RESULT="$SMOKE/devices-i686.txt" step "d3d11-x86$suffix" 120 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d11 || iteration_failed=1
+  RESULT="$SMOKE/devices-x86_64.txt" step "d3d11-x64$suffix" 120 "${WINE[@]}" "${GFX[@]}" "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-x86_64.exe' d3d11 || iteration_failed=1
+  [ "$iteration_failed" -ne 0 ] && break
+done
 # Not covered here: Wine's own Direct3D (WineD3D, Vulkan renderer). Its DXGI needs a display
 # output, which Wine's headless null driver does not provide; on a phone wineandroid does.
 RESULT="$SMOKE/devices-i686.txt" step d3d12-x86 300 "${WINE[@]}" "${GFX[@]}" VKD3D_DEBUG=info "$LOADER" "${DESKTOP[@]}" 'C:\smoke\devices-i686.exe' d3d12

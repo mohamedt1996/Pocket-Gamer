@@ -1,0 +1,124 @@
+name: Android Linux Proton APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish this build as a GitHub pre-release (run from main)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Configure Android SDK and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER=$(find "$SDK/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)
+          "$SDKMANAGER" --sdk_root="$SDK" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.3.13750724' 'cmake;3.22.1'
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "$SDK/build-tools/35.0.0" >> "$GITHUB_PATH"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Fetch GE-Proton and build the x86-64 rootfs
+        run: runtime/android/build-linux-proton-packages.sh
+      - name: Test real packages and build the bundled APK
+        working-directory: android
+        env:
+          LINUX_PROTON_REAL_ARCHIVES: ${{ github.workspace }}/android/app/src/main/assets/linux-proton
+        run: |
+          gradle --no-daemon --max-workers=2 \
+            -Dorg.gradle.jvmargs='-Xmx12g -Dfile.encoding=UTF-8' \
+            --console=plain testDebugUnitTest assembleDebug
+      - name: Verify APK, native libraries and included archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          python3 runtime/android/check-apk.py "$apk"
+          python3 runtime/android/verify-linux-proton-apk.py "$apk"
+          apksigner verify --verbose "$apk"
+          zipalign -c -v 4 "$apk" >/dev/null
+      - name: Stage downloadable files and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+            release-assets/PocketArcade-Android-Linux-Proton-arm64-debug.apk
+          cp android/app/src/main/assets/linux-proton/proton.tgz \
+            release-assets/GE-Proton11-11-x86_64.tgz
+          cp android/app/src/main/assets/linux-proton/rootfs.tgz \
+            release-assets/Debian-bookworm-x86_64-rootfs.tgz
+          cp android/app/src/main/assets/linux-proton/manifest.json \
+            release-assets/linux-proton-manifest.json
+          cp android/app/src/main/assets/runner/box64-android-arm64-16k.zst \
+            release-assets/box64-android-arm64-16k.zst
+          cp android/app/src/main/assets/runner/BOX64-LICENSE.txt release-assets/BOX64-LICENSE.txt
+          cp android/LINUX-PROTON.md release-assets/LINUX-PROTON.md
+          (cd release-assets && sha256sum -- * > SHA256SUMS.txt)
+          for f in release-assets/*; do
+            test "$(stat -c %s "$f")" -lt 2147483648 || { echo "Too large for a GitHub release: $f"; exit 1; }
+          done
+      - name: Upload downloadable build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketArcade-Android-Linux-Proton
+          path: release-assets/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketArcade-Android-Linux-Proton
+          path: release-assets
+      - name: Verify and publish pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release-assets && sha256sum -c SHA256SUMS.txt)
+          tag="android-proton-${GITHUB_RUN_NUMBER}"
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release $tag already exists" >&2
+            exit 1
+          fi
+          cat > release-notes.md <<EOF
+          Pocket Arcade Android Linux Proton build from commit ${GITHUB_SHA}.
+
+          Install \`PocketArcade-Android-Linux-Proton-arm64-debug.apk\` on an ARM64 Android tablet. The APK contains Box64, GE-Proton 11-11 and the x86-64 Debian rootfs. In the Epic screen, install Box64, then tap **Install included Linux packages**. The separate archives, manifest, Box64 file, license and checksums are provided as release assets for inspection and manual staging.
+
+          The official Proton EasyAntiCheat Runtime is **not included**. Obtain and import it separately through Steam or Heroic. EAC support also depends on the game's publisher. Proton execution and Rocket League matchmaking have not been verified on the Mi Pad 7.
+
+          This APK is debug-signed and experimental. See \`LINUX-PROTON.md\` for setup and limitations.
+          EOF
+          gh release create "$tag" release-assets/* --repo "$GH_REPO" \
+            --target "$GITHUB_SHA" --title "Pocket Arcade Android Proton $tag" \
+            --notes-file release-notes.md --prerelease

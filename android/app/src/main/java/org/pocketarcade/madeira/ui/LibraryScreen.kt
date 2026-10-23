@@ -237,6 +237,15 @@ fun LibraryScreen(graph: AppGraph, nav: Navigator) {
                         steamCells(this, downloading + installedItems, list, layout == "compactList", graph, downloads, owner, nav)
                     }
                 }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(colors.fill)
+                        .clickable { nav.push(Screen.Epic) }.padding(16.dp)) {
+                        Column {
+                            Text("Epic Games", style = MaterialTheme.typography.titleSmall, color = colors.label)
+                            Text("Sign in, browse your library and download games", style = MaterialTheme.typography.bodySmall, color = colors.secondary)
+                        }
+                    }
+                }
                 if (account == null) item(span = { GridItemSpan(maxLineSpan) }) { SignInCard { nav.push(Screen.SignIn) } }
                 if (notInstalled.isNotEmpty()) {
                     header(this, "Not installed", notInstalled.size, notInstalledCollapsed) { graph.settings.setNotInstalledCollapsed(!notInstalledCollapsed) }

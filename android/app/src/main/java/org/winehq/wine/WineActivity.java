@@ -155,6 +155,9 @@ public class WineActivity extends Activity
     // Leaves no cached :wine process behind: the app treats a live :wine process as a running game.
     private void endProcess()
     {
+        if (launch != null && launch.spec.getEacDiagnostics() && launch.spec.getEacReport() != null)
+            org.pocketarcade.madeira.epic.EacCompatibility.INSTANCE.capture(
+                new File(launch.spec.getEacReport()), new File(launch.spec.getHome(), "wine.log"));
         org.pocketarcade.madeira.session.SessionState.markEnded(this);
         finishAndRemoveTask();
         android.os.Process.killProcess(android.os.Process.myPid());

@@ -16,6 +16,23 @@ class PerformanceTest {
         assertEquals(30, Performance.frameCap("auto", batteryMode = true))
     }
 
+    @Test fun systemPowerSaverLowersOnlyAutomaticCap() {
+        assertEquals(30, Performance.frameCap("auto", batteryMode = false, powerSaveMode = true))
+        assertEquals(30, Performance.frameCap("auto", batteryMode = true, powerSaveMode = true))
+        assertEquals(48, Performance.frameCap("48", batteryMode = false, powerSaveMode = true))
+        assertEquals(0, Performance.frameCap("off", batteryMode = true, powerSaveMode = true))
+    }
+
+    @Test fun tabletCapSurvivesSettingsAndReachesBothRenderers() {
+        val config = GameConfig.from(GameConfig(frameCap = "48").toJson())
+        assertEquals("48", config.frameCap)
+        val cap = Performance.frameCap(config.frameCap, batteryMode = false)
+        val env = Performance.environment(cap, config.cpuMode)
+        assertEquals("48", env["VKD3D_FRAME_RATE"])
+        assertTrue(env.getValue("DXVK_CONFIG").contains("dxgi.maxFrameRate = 48"))
+        assertTrue(env.getValue("DXVK_CONFIG").contains("d3d9.maxFrameRate = 48"))
+    }
+
     @Test fun explicitCapsAndOff() {
         assertEquals(40, Performance.frameCap("40", batteryMode = true))
         assertEquals(0, Performance.frameCap("off", batteryMode = true))
