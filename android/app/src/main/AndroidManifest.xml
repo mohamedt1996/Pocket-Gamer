@@ -9,7 +9,10 @@
  <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
  <uses-feature android:name="android.hardware.gamepad" android:required="false"/>
  <application android:name=".MadeiraApplication" android:label="${appLabel}" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher"
-   android:theme="@style/Theme.PocketArcade" android:largeHeap="true" android:usesCleartextTraffic="false" android:allowBackup="false">
+   android:theme="@style/Theme.PocketArcade" android:largeHeap="true" android:usesCleartextTraffic="false" android:allowBackup="false"
+   android:appCategory="game" android:isGame="true">
+  <!-- Android's game modes (Android 12+): "battery" lowers the automatic frame cap (session/Thermals.kt). -->
+  <meta-data android:name="android.game_mode_config" android:resource="@xml/game_mode_config"/>
   <activity android:name=".ui.MadeiraActivity" android:exported="true" android:launchMode="singleTask"
     android:windowSoftInputMode="adjustResize" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode">
    <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>

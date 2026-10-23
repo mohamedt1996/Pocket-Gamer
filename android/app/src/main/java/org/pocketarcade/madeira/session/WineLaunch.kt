@@ -42,6 +42,10 @@ data class LaunchSpec(
     val dockReport: String? = null,
     val dockInstallerResults: String? = null,
     val diagnostics: Boolean = false,
+    /** core.Performance choices, and Android's sustained performance mode. */
+    val frameCap: String = "auto",
+    val cpuMode: String = "balanced",
+    val steadyPerformance: Boolean = true,
 ) {
     fun toJson(): String = JSONObject().apply {
         put("home", home); put("command", command); put("workingDir", workingDir); put("title", title)
@@ -50,6 +54,7 @@ data class LaunchSpec(
         put("binds", JSONObject(binds as Map<*, *>)); put("stickMouse", stickMouse); put("steamAppID", steamAppID)
         dockReport?.let { put("dockReport", it) }; dockInstallerResults?.let { put("dockInstallerResults", it) }
         put("diagnostics", diagnostics)
+        put("frameCap", frameCap); put("cpuMode", cpuMode); put("steadyPerformance", steadyPerformance)
     }.toString()
 
     companion object {
@@ -67,6 +72,8 @@ data class LaunchSpec(
                 dockReport = o.optString("dockReport", "").ifEmpty { null },
                 dockInstallerResults = o.optString("dockInstallerResults", "").ifEmpty { null },
                 diagnostics = o.optBoolean("diagnostics"),
+                frameCap = o.optString("frameCap", "auto"), cpuMode = o.optString("cpuMode", "balanced"),
+                steadyPerformance = o.optBoolean("steadyPerformance", true),
             )
         }
 
@@ -101,6 +108,7 @@ class WineLaunch private constructor(
             NativeEnvironment.prepare(env["LD_LIBRARY_PATH"], spec.workingDir.ifEmpty { spec.home }, env["TMPDIR"])
             SessionState.markRunning(activity, spec)
             GameSessionService.start(activity, spec.title)
+            Thermals.attach(activity, spec)
             return WineLaunch(spec.command, env, File(runtime.root(), "lib/wine/aarch64-unix/ntdll.so").absolutePath, spec)
         }
 
@@ -258,10 +266,12 @@ class WineLaunch private constructor(
             if (spec.dllOverrides.isNotBlank()) overrides += spec.dllOverrides.trim()
             env["WINEDLLOVERRIDES"] = overrides.joinToString(";")
             env["DXVK_LOG_PATH"] = home.absolutePath
-            env["DXVK_STATE_CACHE_PATH"] = home.absolutePath
             env["VKD3D_SHADER_CACHE_PATH"] = home.absolutePath
             env["VKD3D_LOG_FILE"] = File(home, "vkd3d.log").absolutePath
             if (spec.performance) env["DXVK_HUD"] = "fps,frametimes,gpuload"
+            // Frame cap and CPU translation mode (core.Performance); the game's own environment wins.
+            val cap = org.pocketarcade.madeira.core.Performance.frameCap(spec.frameCap, Thermals.batteryGameMode(context))
+            env.putAll(org.pocketarcade.madeira.core.Performance.environment(cap, spec.cpuMode))
             for ((k, v) in spec.environment) env[k] = v
             return env
         }

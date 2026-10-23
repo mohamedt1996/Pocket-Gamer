@@ -148,6 +148,24 @@ SwiftShader cannot run DXVK. (WineD3D itself cannot be exercised by the
 headless runtime test: its DXGI needs a display output that Wine's null driver
 does not have.)
 
+### Heat and CPU
+
+- **Frame cap** per game (`core/Performance.kt`): Auto = 60 fps, or 30 in
+  Android's battery game mode; 30/40/60/off by hand. DXVK reads it from
+  `DXVK_CONFIG`, VKD3D-Proton from `VKD3D_FRAME_RATE`. DXVK compiles shaders on
+  three threads instead of one per core.
+- **CPU mode** per game: Balanced (FEX's defaults), Compatible (stricter
+  vector/memcpy ordering) or Fast (no x86 memory-ordering emulation, reduced
+  x87 precision: much less CPU, for games that tolerate it). Set through
+  FEX's `FEX_<OPTION>` environment, which its Windows modules read.
+- **Steady performance** (Settings › Heat, on by default): Android's sustained
+  performance mode for the game window where the phone supports it.
+- The app declares itself a game (`appCategory="game"`, game mode config), so
+  the system's game dashboard and phone makers' game boosters apply; thermal
+  status changes are logged and a hot phone is reported once.
+- Wine's fast sync stays off: this Proton 11 fork has fsync and ntsync only,
+  and Android has neither `/dev/shm` for fsync nor the ntsync driver.
+
 ### 16 KB page devices (Android 15+)
 
 `android_pagesize_test` boots Debian's arm64-16k kernel in QEMU on the CI

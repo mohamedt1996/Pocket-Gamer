@@ -54,7 +54,8 @@ object Launches {
             LaunchSpec(graph.prefix.home.absolutePath, quote(LaunchSpec.windowsPath(program)) + (if (args.isEmpty()) "" else " $args"),
                 folder.absolutePath, name, graphics = config.resolvedGraphics(), environment = extra, dllOverrides = config.dllOverrides,
                 touchControls = config.touchControls, controlLayout = config.controlLayout, performance = config.performance,
-                binds = config.binds, stickMouse = config.stickMouse, steamAppID = appID, diagnostics = graph.settings.diagnostics.value)
+                binds = config.binds, stickMouse = config.stickMouse, steamAppID = appID, diagnostics = graph.settings.diagnostics.value,
+                frameCap = config.frameCap, cpuMode = config.cpuMode, steadyPerformance = graph.settings.steadyPerformance.value)
         } else {
             val options = graph.library.launchOptions(appID)
             val (command, env) = graph.dock.prepareLaunch(g, graph.dock.launchOption(options, g), name, graph.mono.file.takeIf { it.isFile })
@@ -62,7 +63,8 @@ object Launches {
                 environment = env + extra, dllOverrides = config.dllOverrides, touchControls = config.touchControls,
                 controlLayout = config.controlLayout, performance = config.performance, binds = config.binds, stickMouse = config.stickMouse,
                 steamAppID = appID, dockReport = graph.dock.reportFile.absolutePath, dockInstallerResults = graph.dock.installerResults.absolutePath,
-                diagnostics = graph.settings.diagnostics.value)
+                diagnostics = graph.settings.diagnostics.value,
+                frameCap = config.frameCap, cpuMode = config.cpuMode, steadyPerformance = graph.settings.steadyPerformance.value)
         }
         graph.steamConfigs.update(appID) { it.copy(lastPlayed = System.currentTimeMillis()) }
         return spec
@@ -78,7 +80,8 @@ object Launches {
             graphics = game.config.resolvedGraphics(), environment = GameConfig.parseEnvironment(game.config.environment),
             dllOverrides = game.config.dllOverrides, touchControls = game.config.touchControls, controlLayout = game.config.controlLayout,
             performance = game.config.performance, binds = game.config.binds, stickMouse = game.config.stickMouse,
-            diagnostics = graph.settings.diagnostics.value)
+            diagnostics = graph.settings.diagnostics.value,
+            frameCap = game.config.frameCap, cpuMode = game.config.cpuMode, steadyPerformance = graph.settings.steadyPerformance.value)
     }
 
     /** Runs an installer (EXE or MSI) in a game's prefix, for runtimes the game needs. */

@@ -168,6 +168,20 @@ fun CommonSettings(config: GameConfig, onChange: (GameConfig) -> Unit) {
         RowDivider()
         ToggleRow("Performance overlay", config.performance, "Frame rate in the corner, and DXVK's HUD.") { onChange(config.copy(performance = it)) }
     }
+    SettingsSection("Frame cap", footer = when (config.frameCap) {
+        "auto" -> "60 frames per second, or 30 in Android's battery game mode. Frames the game does not draw are heat the phone does not make."
+        "off" -> "No cap: the game draws as fast as it can. Fastest, and hottest."
+        else -> "At most ${config.frameCap} frames per second (DXVK and VKD3D-Proton)."
+    }) {
+        Choice(listOf("auto" to "Auto", "30" to "30", "40" to "40", "60" to "60", "off" to "Off"), config.frameCap) { onChange(config.copy(frameCap = it)) }
+    }
+    SettingsSection("CPU", footer = when (config.cpuMode) {
+        "compatible" -> "Stricter x86 emulation for games that glitch or crash in Balanced. Uses more CPU."
+        "fast" -> "Skips x86 memory-ordering emulation and uses faster, less precise x87 math. Much less CPU and heat, but some games crash or misbehave: use it for games that run well."
+        else -> "FEX's own defaults: the best mix of speed and compatibility."
+    }) {
+        Choice(listOf("compatible" to "Compatible", "balanced" to "Balanced", "fast" to "Fast"), config.cpuMode) { onChange(config.copy(cpuMode = it)) }
+    }
     var arguments by remember(config.arguments) { mutableStateOf(config.arguments) }
     var environment by remember(config.environment) { mutableStateOf(config.environment) }
     var overrides by remember(config.dllOverrides) { mutableStateOf(config.dllOverrides) }

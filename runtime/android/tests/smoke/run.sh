@@ -151,6 +151,8 @@ WINEENV=(
   FEX_SILENTLOG=0
   VK_ICD_FILENAMES="$(ls "$TERMUX"/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
   WINEDLLOVERRIDES="mscoree,mshtml=d"
+  # The app's default frame cap and shader-compiler threads (core/Performance.kt).
+  DXVK_CONFIG="dxvk.numCompilerThreads = 3; dxgi.maxFrameRate = 60; d3d9.maxFrameRate = 60" VKD3D_FRAME_RATE=60
 )
 WINE=(env -i "${WINEENV[@]}")
 

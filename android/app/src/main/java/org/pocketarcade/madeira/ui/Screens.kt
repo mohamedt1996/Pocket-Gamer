@@ -327,6 +327,7 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
     val metal by s.liquidMetal.collectAsState()
     val ambient by s.ambient.collectAsState()
     val diagnostics by s.diagnostics.collectAsState()
+    val steady by s.steadyPerformance.collectAsState()
     var confirmSignOut by remember { mutableStateOf(false) }
 
     PageFrame("Settings", { nav.pop() }) {
@@ -385,6 +386,9 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
             SettingsRow("DXVK (Direct3D 8–11)", if (gpu.dxvk) "Supported" else "Not supported")
             RowDivider()
             SettingsRow("VKD3D-Proton (Direct3D 12)", if (gpu.vkd3d) "Supported" else "Not supported")
+        }
+        SettingsSection("Heat", footer = "Each game's frame cap and CPU mode are in its settings. Android's battery game mode (game dashboard or the phone's game booster) lowers the automatic frame cap to 30.") {
+            ToggleRow("Steady performance", steady, "Steady speeds the phone can hold, instead of bursts that heat it up and then slow down. On phones that support it.") { s.setSteadyPerformance(it) }
         }
         SettingsSection("Troubleshooting") {
             SettingsRow("Windows desktop", subtitle = "Opens Explorer in the Steam games' Windows environment.", icon = Icons.Filled.DesktopWindows) { startDesktop(graph, context) }
