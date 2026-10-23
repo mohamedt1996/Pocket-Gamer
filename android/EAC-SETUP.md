@@ -31,6 +31,11 @@ an official archive they are authorized to distribute) and
 `PROTON_EAC_RUNTIME_SHA256` (Actions variable with its SHA-256). The workflow
 rejects an archive whose checksum or x86-64 EAC bridge is wrong.
 
+An anonymous SteamCMD install of Valve's tool app `1826330` was tested on a
+hosted Linux runner and returned `Failed to install app '1826330' (Missing
+configuration)`. The workflow therefore cannot fetch the official runtime
+without an authorized Steam installation or supplied archive.
+
 Only publish an APK containing EAC if you have permission to redistribute the
 runtime. Installing the runtime does not guarantee EAC or Rocket League online
 play: the game's publisher must support Proton, and this tablet path still
