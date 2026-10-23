@@ -30,9 +30,17 @@ def verify(path, kind):
         prefix = ""
         marker = {"rootfs": "usr/bin/python3", "proton": "proton",
                   "eac_runtime": "v2/lib/x86_64-linux-gnu/easyanticheat.so"}[kind]
-        if kind == "eac_runtime" and not any(n.endswith("v2/lib/x86_64-linux-gnu/easyanticheat.so") or
-                                                n.endswith("v2/lib/x86_64-linux-gnu/easyanticheat_x64.so") for n in members):
-            raise ValueError("EAC package has no x86-64 Proton bridge")
+        if kind == "eac_runtime":
+            bridges = [m for n, m in members.items() if
+                       n.endswith("v2/lib/x86_64-linux-gnu/easyanticheat.so") or
+                       n.endswith("v2/lib/x86_64-linux-gnu/easyanticheat_x64.so")]
+            if not bridges:
+                raise ValueError("EAC package has no x86-64 Proton bridge")
+            for bridge in bridges:
+                stream = tar.extractfile(bridge)
+                header = stream.read(20) if stream else b""
+                if header[:6] != b"\x7fELF\x02\x01" or len(header) < 20 or struct.unpack_from("<H", header, 18)[0] != 62:
+                    raise ValueError("EAC bridge is not an x86-64 Linux ELF")
         if kind != "eac_runtime":
             candidates = [n for n in members if n == marker or n.endswith("/" + marker)]
             if len(candidates) != 1:
@@ -83,6 +91,8 @@ def main():
     for kind, path in files.items():
         verify(path, kind)
     OUT.mkdir(parents=True, exist_ok=True)
+    if not args.eac:
+        (OUT / "eac_runtime.tgz").unlink(missing_ok=True)
     manifest = {"schema": 1, "protonRelease": "GE-Proton11-11-x86_64", "components": {}}
     for kind, path in files.items():
         # Android's asset packager transparently expands and renames .gz files.

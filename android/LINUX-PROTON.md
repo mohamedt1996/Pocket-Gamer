@@ -22,17 +22,25 @@ This produces `android/app/build/outputs/apk/debug/app-debug.apk`. The larger
 Gradle heap is needed while packaging these assets. Tap **Install included Linux packages** to extract
 them into app-private storage. The packages add about 703 MB to the APK and
 need several gigabytes free while extracting. The standard small APK can still
-use the three **Import .tar.gz** buttons to select existing packages:
+use the three **Import .tar.gz** buttons to select existing packages.
 
 GitHub Actions runs the same build in **Android Linux Proton APK** on pushes to
 `main`, and the downloadable **PocketArcade-Android-Linux-Proton** build artifact
-contains the APK, the separate Proton and rootfs archives, Box64, the manifest,
-setup notes, and `SHA256SUMS.txt`. Push an `android-proton-v*` tag to build and
+contains the APK, the separate Proton and rootfs archives, Box64, setup notes,
+the manifest, and `SHA256SUMS.txt`. Push an `android-proton-v*` tag to build and
 publish those files as a pre-release. Alternatively, from the Actions page run
 this workflow on `main` with **publish_release** enabled.
 The release assets remain available after the temporary Actions artifact expires.
 The workflow verifies the APK signature, 16 KB native library alignment, and
 archive bytes before publishing.
+
+The APK is self-contained for the included Linux packages. To add the official
+Proton EAC runtime to a personal APK, supply its archive to the build script
+with `--eac`; for GitHub Actions, see [EAC-SETUP.md](EAC-SETUP.md) for the
+verified archive source settings and redistribution condition. When supplied,
+the EAC archive is included inside the APK and in its release assets.
+
+## Package requirements
 
 1. **rootfs**: a relocatable x86-64 Linux root filesystem with executable
    `usr/bin/python3` and glibc (`lib/x86_64-linux-gnu/libc.so.6` or
@@ -48,11 +56,11 @@ archive bytes before publishing.
    or `easyanticheat_x64.so`. The app requires this before attempting an EAC
    game. The game publisher must also support EAC on Proton.
 
-The current bundled variant includes **rootfs and Proton**, but not the
-proprietary EAC runtime. Obtain the latter through Steam or Heroic and import
-it, or supply its official `.tar.gz` to the build script with `--eac` when its
-distribution terms allow that use. The app never treats Proton itself as an
-EAC runtime.
+The public bundled variant includes **rootfs and Proton**, but not the
+proprietary EAC runtime. Follow [EAC-SETUP.md](EAC-SETUP.md) to import it from
+Steam or Heroic, or supply an official archive to the build script with
+`--eac` when its distribution terms allow that use. The app never treats
+Proton itself as an EAC runtime.
 
 The pinned Proton archive is
 [GE-Proton11-11-x86_64](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-11),

@@ -52,6 +52,16 @@ class LinuxProtonInstallerTest {
             assertTrue(!root.parentFile!!.resolve("escape").exists())
         } finally { root.deleteRecursively() }
     }
+    @Test fun importsSeparateEacRuntimeWithSteamFolder() {
+        val root = Files.createTempDirectory("linux-eac-import").toFile()
+        try {
+            val input = archive { tar ->
+                file(tar, "Proton EasyAntiCheat Runtime/v2/lib/x86_64-linux-gnu/easyanticheat.so", "bridge")
+            }
+            LinuxProtonInstaller.extract(ByteArrayInputStream(input), root, LinuxProtonInstaller.Component.EAC)
+            assertTrue(root.resolve("eac_runtime/v2/lib/x86_64-linux-gnu/easyanticheat.so").isFile)
+        } finally { root.deleteRecursively() }
+    }
     @Test fun bundledUpstreamArchivesExtractOnHostWhenPresent() {
         val source = File(System.getenv("LINUX_PROTON_REAL_ARCHIVES") ?: "")
         assumeTrue(System.getenv("LINUX_PROTON_REAL_ARCHIVES") != null &&

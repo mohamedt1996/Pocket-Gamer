@@ -37,7 +37,23 @@ jobs:
         with:
           gradle-version: '8.9'
       - name: Fetch GE-Proton and build the x86-64 rootfs
-        run: runtime/android/build-linux-proton-packages.sh
+        env:
+          EAC_RUNTIME_URL: ${{ secrets.PROTON_EAC_RUNTIME_URL }}
+          EAC_RUNTIME_SHA256: ${{ vars.PROTON_EAC_RUNTIME_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$EAC_RUNTIME_URL" && -z "$EAC_RUNTIME_SHA256" ]]; then
+            runtime/android/build-linux-proton-packages.sh
+          else
+            [[ -n "$EAC_RUNTIME_URL" && "$EAC_RUNTIME_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || {
+              echo "Set both PROTON_EAC_RUNTIME_URL and PROTON_EAC_RUNTIME_SHA256" >&2; exit 1;
+            }
+            curl -fLsS --retry 3 --output "$RUNNER_TEMP/proton-eac-runtime.tar.gz" "$EAC_RUNTIME_URL"
+            actual=$(sha256sum "$RUNNER_TEMP/proton-eac-runtime.tar.gz" | cut -d' ' -f1)
+            [[ "$actual" == "${EAC_RUNTIME_SHA256,,}" ]] || { echo "EAC archive checksum mismatch" >&2; exit 1; }
+            runtime/android/build-linux-proton-packages.sh --eac "$RUNNER_TEMP/proton-eac-runtime.tar.gz"
+          fi
       - name: Test real packages and build the bundled APK
         working-directory: android
         env:
@@ -66,12 +82,17 @@ jobs:
             release-assets/GE-Proton11-11-x86_64.tgz
           cp android/app/src/main/assets/linux-proton/rootfs.tgz \
             release-assets/Debian-bookworm-x86_64-rootfs.tgz
+          if [[ -f android/app/src/main/assets/linux-proton/eac_runtime.tgz ]]; then
+            cp android/app/src/main/assets/linux-proton/eac_runtime.tgz \
+              release-assets/Proton-EasyAntiCheat-Runtime.tgz
+          fi
           cp android/app/src/main/assets/linux-proton/manifest.json \
             release-assets/linux-proton-manifest.json
           cp android/app/src/main/assets/runner/box64-android-arm64-16k.zst \
             release-assets/box64-android-arm64-16k.zst
           cp android/app/src/main/assets/runner/BOX64-LICENSE.txt release-assets/BOX64-LICENSE.txt
           cp android/LINUX-PROTON.md release-assets/LINUX-PROTON.md
+          cp android/EAC-SETUP.md release-assets/EAC-SETUP.md
           (cd release-assets && sha256sum -- * > SHA256SUMS.txt)
           for f in release-assets/*; do
             test "$(stat -c %s "$f")" -lt 2147483648 || { echo "Too large for a GitHub release: $f"; exit 1; }
@@ -117,12 +138,17 @@ jobs:
             echo "Release $tag already exists" >&2
             exit 1
           fi
+          if [[ -f release-assets/Proton-EasyAntiCheat-Runtime.tgz ]]; then
+            eac_note="The APK also includes the official Proton EasyAntiCheat Runtime supplied for this build. This does not guarantee EAC server acceptance or Rocket League online play."
+          else
+            eac_note="The official Proton EasyAntiCheat Runtime is a separate Steam tool and is not in this APK. Follow EAC-SETUP.md in the assets to import it."
+          fi
           cat > release-notes.md <<EOF
           Pocket Arcade Android Linux Proton build from commit ${GITHUB_SHA}.
 
           Install \`PocketArcade-Android-Linux-Proton-arm64-debug.apk\` on an ARM64 Android tablet. The APK contains Box64, GE-Proton 11-11 and the x86-64 Debian rootfs. In the Epic screen, install Box64, then tap **Install included Linux packages**. The separate archives, manifest, Box64 file, license and checksums are provided as release assets for inspection and manual staging.
 
-          The official Proton EasyAntiCheat Runtime is **not included**. Obtain and import it separately through Steam or Heroic. EAC support also depends on the game's publisher. Proton execution and Rocket League matchmaking have not been verified on the Mi Pad 7.
+          ${eac_note} EAC support also depends on the game's publisher. Proton execution and Rocket League matchmaking have not been verified on the Mi Pad 7.
 
           This APK is debug-signed and experimental. See \`LINUX-PROTON.md\` for setup and limitations.
           EOF

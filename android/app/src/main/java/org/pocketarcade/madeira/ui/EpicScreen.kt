@@ -96,13 +96,16 @@ fun EpicScreen(graph: AppGraph, nav: Navigator) {
                     }
                     Text("Included: ${bundledPackages.joinToString { it.component.folder }}", style = MaterialTheme.typography.bodySmall)
                 }
+                if (bundledPackages.none { it.component == LinuxProtonInstaller.Component.EAC })
+                    Text("EAC is a separate Steam tool. On a Linux PC, install Proton EasyAntiCheat Runtime from Steam Library → Tools, archive its installed folder, copy it to this tablet, then tap Import EAC runtime below. See EAC-SETUP.md in the release assets.",
+                        style = MaterialTheme.typography.bodySmall, color = colors.secondary)
                 state.bundleProgress?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     LinuxProtonInstaller.Component.entries.forEach { component ->
                         TextButton(enabled = !state.busy, onClick = {
                             pickingComponent = component.name
                             protonPicker.launch(arrayOf("*/*"))
-                        }) { Text("Import ${component.folder} .tar.gz") }
+                        }) { Text(if (component == LinuxProtonInstaller.Component.EAC) "Import EAC runtime .tar.gz" else "Import ${component.folder} .tar.gz") }
                     }
                 }
                 Text("Use complete upstream archives. Imports are stored privately and may need several GB of free space. The Linux display runs in a separate X11 app.",
