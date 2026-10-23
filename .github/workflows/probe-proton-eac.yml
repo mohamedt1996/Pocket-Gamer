@@ -35,6 +35,13 @@ jobs:
           set -e
           tail -40 "$RUNNER_TEMP/steamcmd.log"
           echo "SteamCMD exit code: $result"
+          {
+            echo '### Anonymous SteamCMD result'
+            echo "Exit code: $result"
+            echo '```text'
+            tail -25 "$RUNNER_TEMP/steamcmd.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           if [[ "$result" -ne 0 ]]; then exit "$result"; fi
           find "$RUNNER_TEMP/proton-eac" -maxdepth 4 -type f \
             \( -iname 'license*' -o -iname 'copying*' -o -iname '*eula*' -o -name 'easyanticheat*.so' \) \
