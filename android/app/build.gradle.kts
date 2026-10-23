@@ -4,22 +4,17 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
-// -PwineVariant=madeira builds the experimental APK around Madeira's Wine. It gets
-// its own application ID and name so it installs next to the regular app.
-val wineVariant = (findProperty("wineVariant") as String?) ?: "proton"
-require(wineVariant == "proton" || wineVariant == "madeira") { "wineVariant must be proton or madeira" }
 android {
     namespace = "org.pocketarcade.madeira"
     compileSdk = 35
     ndkVersion = "27.3.13750724"
     defaultConfig {
-        applicationId = if (wineVariant == "madeira") "org.pocketarcade.madeira.winemadeira" else "org.pocketarcade.madeira"
-        manifestPlaceholders["appLabel"] = if (wineVariant == "madeira") "Pocket Arcade (Madeira Wine)" else "Pocket Arcade"
+        applicationId = "org.pocketarcade.madeira"
+        manifestPlaceholders["appLabel"] = "Pocket Arcade"
         minSdk = 28
         targetSdk = 28 // Prototype only: review modern Android policies before distribution.
         versionCode = 3
-        versionName = "0.3.0" + (if (wineVariant == "madeira") "-madeira-wine" else "")
-        buildConfigField("String", "WINE_VARIANT", "\"$wineVariant\"")
+        versionName = "0.3.0"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { cppFlags += "-std=c++17" } }
     }

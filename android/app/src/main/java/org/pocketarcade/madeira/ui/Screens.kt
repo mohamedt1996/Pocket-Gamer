@@ -402,7 +402,7 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
         SettingsSection("About", footer = "Pocket Arcade is free software under the GNU GPL, version 3 or later, built on Madeira by Jfishin and 125hz. Steam is a trademark of Valve; this app is not affiliated with Valve.") {
             SettingsRow("Version", BuildConfig.VERSION_NAME)
             RowDivider()
-            SettingsRow("Wine", if (BuildConfig.WINE_VARIANT == "madeira") "Madeira Wine" else "Proton Wine")
+            SettingsRow("Wine", "Proton Wine")
             RowDivider()
             SettingsRow("Licences", chevron = true) { nav.push(Screen.Licenses) }
         }

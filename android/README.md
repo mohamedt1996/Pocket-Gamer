@@ -89,7 +89,7 @@ It does not download arbitrary individual Windows DLLs from DLL collection sites
 
 ## What has actually been verified here
 
-CI builds every component and both APKs, runs the Kotlin unit tests, and
+CI builds every component and the APK, runs the Kotlin unit tests, and
 checks that the app's native libraries are 16 KB page aligned.
 
 The `android_runtime_test` job then **runs** each APK's Windows runtime on a
@@ -99,39 +99,28 @@ app's path, the prefix and environment `WineLaunch` creates, no
 `LD_LIBRARY_PATH`, programs started through `explorer /desktop=shell,...` like
 `WineActivity` starts games. See `runtime/android/tests/smoke/`.
 
-| Check | Default APK (Proton fork + upstream FEX) | Madeira APK (Madeira's Wine + Madeira's FEX, Android mode) |
-|---|---|---|
-| wineboot (new 64-bit prefix) | passes | passes |
-| x64 program via FEX ARM64EC: threads, memory, exceptions, files, registry, child process, timers, sockets | passes | passes |
-| x86 program via FEX WoW64: same checks | passes | passes |
-| Vulkan (lavapipe CPU driver standing in for the GPU) | passes, x64 and x86 | passes, x64 and x86 |
-| Direct3D 11 device through DXVK | passes, x64 and x86 | passes, x64 and x86 |
-| Direct3D 12 device through VKD3D-Proton | passes, x64 and x86 | passes, x64 and x86 |
-| Sound: WASAPI → DirectAudio → AAudio (a stand-in AAudio that measures what arrives) | passes, x64 and x86 | passes, x64 and x86 |
+| Check | Result |
+|---|---|
+| wineboot (new 64-bit prefix) | passes |
+| x64 program via FEX ARM64EC: threads, memory, exceptions, files, registry, child process, timers, sockets | passes |
+| x86 program via FEX WoW64: same checks | passes |
+| Vulkan (lavapipe CPU driver standing in for the GPU) | passes, x64 and x86 |
+| Direct3D 11 device through DXVK | passes, x64 and x86 |
+| Direct3D 12 device through VKD3D-Proton | passes, x64 and x86 |
+| Sound: WASAPI → DirectAudio → AAudio (a stand-in AAudio that measures what arrives) | passes, x64 and x86 |
 
-Both APKs must pass this job. A failing program is run again directly; a
-crash leaves a core whose report (`core.py`) names each address's library or
-PE image, and Madeira's Wine prints the caller of any branch into non-code
-memory.
+The APK must pass this job. A failing program is run again directly; a crash
+leaves a core whose report (`core.py`) names each address's library or PE
+image.
 
-### How the Madeira APK runs Madeira's design on Android
+### One Wine, one translator
 
-Madeira's Wine (willfaust/wine) and FEX (willfaust/FEX) were written for iOS.
-They are kept as they are, with Android changes as patches
-(`runtime/android/madeira/`):
-
-- **FEX in Android mode** (`fex-android.patch`, `-DFEX_ANDROID_HOST`): upstream
-  FEX's Linux design where iOS has its own (x18 is the TEB, plain RWX memory,
-  signals), the fork's host-independent parts where Madeira's Wine relies on
-  them, and fixes for paths the fork only ran on iOS: no implicit TLS in the
-  Windows modules, CheckCall keeping already-native ntdll targets, no
-  guard-page "restart" before a guard page exists, lookup cache committed up
-  front, no syscall parking (it serves the iOS-only sweeper).
-- **Wine**: iOS assumed a 39-bit user space. On Linux/Android Wine maps modules
-  and stacks near 2^47, so the ARM64EC call checker sent every ntdll call into
-  the emulator and the IO_STATUS_BLOCK guard refused every socket (patch 0013);
-  Wine's own host address-limit detection replaces a hard-coded 39-bit limit
-  (patch 0001). Madeira's iOS-only unix calls get Android entries (0011).
+The app ships one runtime: the Proton 11 Android fork (ARM64EC Wine built
+against bionic) with upstream FEX for x64 (ARM64EC) and x86 (WoW64) programs.
+FEX runs only the game's code as x86; Wine itself runs natively, which keeps
+the CPU cost per system call low. The experimental second APK around
+Madeira's iOS Wine and FEX fork has been dropped; the app keeps Madeira's
+design, Madeira Dock and its log keeping.
 
 The `android_emulator_test` job runs the app itself (without the runtime) on
 Android 11, 14, 15 and 16 emulator images with ARM64 translation: install,
@@ -168,8 +157,8 @@ runtime test. It found that every process Wine starts died at exec: the
 static `wine-preloader` had 4 KB-aligned segments. Both Wine builds now link
 it 16 KB aligned, and packaging fails if any runtime ELF is not 16 KB aligned.
 
-With that and the FEX guard fix below, **both APKs pass all 15 runtime
-checks on 16 KB pages** (x64 and x86 programs through FEX, Vulkan, D3D11,
+With that and the FEX guard fix below, **the runtime passes all 15 checks on
+16 KB pages** (x64 and x86 programs through FEX, Vulkan, D3D11,
 D3D12, sound), as they do on 4 KB pages.
 
 Notes from getting there:
@@ -184,8 +173,8 @@ Notes from getting there:
   read-only page next to writable data is not enforced at 4 KB granularity.
   FEX relied on two such guard pages: its call-ret stack's (the Proton
   build's 32-bit wineboot step ran past it and left the 32-bit registry view
-  empty) and its JIT buffer's. Both FEX builds now use 64 KB guard regions
-  (`patches/fex-16k-guards.patch`, and Madeira's FEX patch). A game relying on
+  empty) and its JIT buffer's. FEX now uses 64 KB guard regions
+  (`patches/fex-16k-guards.patch`). A game relying on
   fine-grained guard pages or write traps of its own might still notice.
 
 **Not covered:** Wine's window, input and presentation on a real Android surface
@@ -196,7 +185,7 @@ actual games. Those still need a physical-device run.
 ## Important unresolved integration risks
 
 The 32-bit Direct3D 11 device check sometimes hangs after its device was
-created (seen in about one run in four, both APKs, natively and in the VM):
+created (seen in about one run in four, natively and in the VM):
 every thread of the program waits and lavapipe's threads are idle. It has not
 been diagnosed yet.
 

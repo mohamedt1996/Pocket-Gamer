@@ -15,11 +15,6 @@ if [ "$FEX_COMPONENT" = fex ]; then
   git -C "$WORK" checkout -q -- .
   git -C "$WORK" apply "$ROOT/runtime/android/patches/fex-16k-guards.patch"
 fi
-if [ "$FEX_COMPONENT" = fex-madeira ]; then
-  git -C "$WORK" checkout -q -- .
-  git -C "$WORK" apply "$ROOT/runtime/android/madeira/fex-android.patch"
-  HOST_FLAGS=(-DCMAKE_C_FLAGS=-DFEX_ANDROID_HOST -DCMAKE_CXX_FLAGS=-DFEX_ANDROID_HOST -DCMAKE_ASM_FLAGS=-DFEX_ANDROID_HOST)
-fi
 mkdir -p "$OUT/lib/wine/aarch64-windows" "$OUT/lib/wine/aarch64-unix" "$OUT/share/licenses/fex"
 for target in arm64ec aarch64; do
   cmake -S "$WORK" -B "$WORK/build-$target" -G Ninja \

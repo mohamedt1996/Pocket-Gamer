@@ -78,7 +78,7 @@ class AppGraph private constructor(val context: Context) {
     }
     val localGames by lazy { LocalGames(context) }
     val dock by lazy { DockModel(context, http, prefix, vault) }
-    val mono by lazy { WineMono(context, http, BuildConfig.WINE_VARIANT) }
+    val mono by lazy { WineMono(context, http) }
     val runtime by lazy { PortRuntime(context) }
 
     private fun cloudClientID(): Long {

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Assemble CI outputs, checking native architecture and mandatory components.
 
-usage: package-runtime.py [--wine wine|wine-madeira]
---wine picks the Wine component under .android-out/: "wine" (Proton Android
-fork, the default) or "wine-madeira" (Madeira's Wine, experimental).
+usage: package-runtime.py
+Packs the Proton Android fork's Wine ("wine"), FEX ("fex"), graphics and
+addons from .android-out/ into the APK's runtime asset.
 """
 from pathlib import Path
 import hashlib,json,re,shutil,struct,sys,zipfile
 root=Path(__file__).resolve().parents[2]
 args=sys.argv[1:]
 opts=dict(zip(args[::2],args[1::2]))
-if len(args)%2 or set(opts)-{'--wine','--fex'}: raise SystemExit('usage: package-runtime.py [--wine wine|wine-madeira] [--fex fex|fex-madeira]')
+if len(args)%2 or set(opts)-{'--wine','--fex'}: raise SystemExit('usage: package-runtime.py [--wine wine] [--fex fex]')
 wine=opts.get('--wine','wine'); fex=opts.get('--fex','fex')
-if wine not in ('wine','wine-madeira'): raise SystemExit('Unknown Wine component: '+wine)
-if fex not in ('fex','fex-madeira'): raise SystemExit('Unknown FEX component: '+fex)
+if wine!='wine': raise SystemExit('Unknown Wine component: '+wine)
+if fex!='fex': raise SystemExit('Unknown FEX component: '+fex)
 out=root/'.android-out'; stage=out/'bundle'
 if stage.exists(): shutil.rmtree(stage)
 stage.mkdir(parents=True)
