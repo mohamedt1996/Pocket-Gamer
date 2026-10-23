@@ -97,8 +97,11 @@ fun EpicScreen(graph: AppGraph, nav: Navigator) {
                     Text("Included: ${bundledPackages.joinToString { it.component.folder }}", style = MaterialTheme.typography.bodySmall)
                 }
                 if (bundledPackages.none { it.component == LinuxProtonInstaller.Component.EAC })
-                    Text("EAC is a separate Steam tool. On a Linux PC, install Proton EasyAntiCheat Runtime from Steam Library → Tools, archive its installed folder, copy it to this tablet, then tap Import EAC runtime below. See EAC-SETUP.md in the release assets.",
+                    Text("Proton EasyAntiCheat Runtime is a separate Steam tool. Install it with your Steam account below, or import a copy from a Linux Steam installation.",
                         style = MaterialTheme.typography.bodySmall, color = colors.secondary)
+                Button(enabled = !state.busy, onClick = {
+                    if (graph.account.signedIn) model.installEacFromSteam() else nav.push(Screen.SignIn)
+                }) { Text(if (graph.account.signedIn) "Install EAC runtime from Steam" else "Sign in to Steam to install EAC") }
                 state.bundleProgress?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     LinuxProtonInstaller.Component.entries.forEach { component ->

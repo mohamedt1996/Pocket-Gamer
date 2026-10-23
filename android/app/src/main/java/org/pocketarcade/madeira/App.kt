@@ -77,7 +77,9 @@ class AppGraph private constructor(val context: Context) {
         }
     }
     val localGames by lazy { LocalGames(context) }
-    val epic by lazy { org.pocketarcade.madeira.epic.EpicLibrary(context, scope) }
+    val epic by lazy { org.pocketarcade.madeira.epic.EpicLibrary(context, scope,
+        steamEac = org.pocketarcade.madeira.epic.SteamEacInstaller(context, fetcher, downloader),
+        steamSignedIn = { account.signedIn }) }
     val dock by lazy { DockModel(context, http, prefix, vault) }
     val mono by lazy { WineMono(context, http) }
     val runtime by lazy { PortRuntime(context) }

@@ -5,7 +5,14 @@ Pocket Arcade cannot treat Proton or the game's Windows EAC files as the
 that Steam distributes as a separate tool. The public APK currently includes
 Box64, Proton and the Linux rootfs, but no EAC runtime.
 
-To import the official runtime without changing the APK:
+In **Epic Games → Linux Proton research**, sign in to Steam and tap **Install
+EAC runtime from Steam**. Pocket Arcade requests Steam tool app `1826330` from
+Steam's content service using your account, selects its Linux depots, and checks
+the x86-64 bridge before activating it. Steam may refuse the download if your
+account cannot access the tool. A completed download still needs live on-device
+testing; it does not establish anti-cheat acceptance.
+
+If Steam's direct download is unavailable, import the official runtime:
 
 1. On a Linux PC or Steam Deck, open Steam's **Library**, enable **Tools** in
    the library filter, and install **Proton EasyAntiCheat Runtime**.
@@ -33,8 +40,9 @@ rejects an archive whose checksum or x86-64 EAC bridge is wrong.
 
 An anonymous SteamCMD install of Valve's tool app `1826330` was tested on a
 hosted Linux runner and returned `Failed to install app '1826330' (Missing
-configuration)`. The workflow therefore cannot fetch the official runtime
-without an authorized Steam installation or supplied archive.
+configuration)`. The GitHub workflow therefore cannot fetch the official runtime
+without an authorized Steam installation or supplied archive. The in-app
+installer uses your authenticated Steam session on the tablet.
 
 Only publish an APK containing EAC if you have permission to redistribute the
 runtime. Installing the runtime does not guarantee EAC or Rocket League online

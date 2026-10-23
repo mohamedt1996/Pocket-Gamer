@@ -2,7 +2,7 @@ name: Android Linux Proton APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/android-runtime]
     tags: ['android-proton-v*']
   workflow_dispatch:
     inputs:
@@ -141,7 +141,7 @@ jobs:
           if [[ -f release-assets/Proton-EasyAntiCheat-Runtime.tgz ]]; then
             eac_note="The APK also includes the official Proton EasyAntiCheat Runtime supplied for this build. This does not guarantee EAC server acceptance or Rocket League online play."
           else
-            eac_note="The official Proton EasyAntiCheat Runtime is a separate Steam tool and is not in this APK. Follow EAC-SETUP.md in the assets to import it."
+            eac_note="The official Proton EasyAntiCheat Runtime is a separate Steam tool and is not in this APK. Sign in to Steam in the app and use **Install EAC runtime from Steam** in the Epic screen. See EAC-SETUP.md for an import fallback."
           fi
           cat > release-notes.md <<EOF
           Pocket Arcade Android Linux Proton build from commit ${GITHUB_SHA}.

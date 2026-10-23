@@ -25,7 +25,8 @@ import org.pocketarcade.madeira.session.LaunchSpec
 import java.io.File
 import java.security.MessageDigest
 
-class EpicLibrary(private val context: Context, private val scope: CoroutineScope, val api: EpicApi = EpicApi()) {
+class EpicLibrary(private val context: Context, private val scope: CoroutineScope, val api: EpicApi = EpicApi(),
+                  private val steamEac: SteamEacInstaller? = null, private val steamSignedIn: () -> Boolean = { false }) {
     data class State(val account: String? = null, val games: List<EpicGame> = emptyList(), val busy: Boolean = false,
                      val error: String? = null, val componentRevision: Int = 0, val box64Probe: String? = null,
                      val protonStatusApp: String? = null, val protonStatus: String? = null,
@@ -115,6 +116,28 @@ class EpicLibrary(private val context: Context, private val scope: CoroutineScop
         } catch (e: CancellationException) { throw e
         } catch (e: Exception) {
             _state.value = _state.value.copy(error = e.message ?: "Could not install the included Linux packages", bundleProgress = null)
+        }
+    }
+    fun installEacFromSteam() = action {
+        try {
+            require(steamSignedIn()) { "Sign in to Steam in Settings first, then install Proton EasyAntiCheat Runtime here" }
+            val installer = steamEac ?: error("Steam downloader is unavailable")
+            _state.value = _state.value.copy(bundleProgress = "Connecting to Steam for Proton EasyAntiCheat Runtime…")
+            installer.install { progress ->
+                val label = when (progress.phase) {
+                    org.pocketarcade.madeira.steam.DownloadProgress.Phase.PREPARING -> "Preparing Steam EAC download…"
+                    org.pocketarcade.madeira.steam.DownloadProgress.Phase.DOWNLOADING ->
+                        "Downloading Steam EAC: ${(progress.fraction * 100).toInt()}%"
+                    org.pocketarcade.madeira.steam.DownloadProgress.Phase.FINISHING -> "Verifying Steam EAC runtime…"
+                }
+                _state.value = _state.value.copy(bundleProgress = label)
+            }
+            _state.value = _state.value.copy(componentRevision = _state.value.componentRevision + 1,
+                bundleProgress = "Proton EasyAntiCheat Runtime installed from Steam")
+        } catch (e: CancellationException) { throw e
+        } catch (e: Exception) {
+            _state.value = _state.value.copy(error = e.message ?: "Steam EAC download failed; check Steam sign-in and try again",
+                bundleProgress = null)
         }
     }
     private suspend fun validCredentials(): EpicCredentials = credentialsLock.withLock {
