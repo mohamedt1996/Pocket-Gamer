@@ -163,10 +163,30 @@ does not have.)
 
 `android_pagesize_test` boots Debian's arm64-16k kernel in QEMU on the CI
 runner, swaps Android 9's bionic for Android 15's page-size-agnostic linker
-and libc (taken from Google's arm64 emulator image), and runs the runtime
-test. It found that every process Wine starts died at exec: the static
-`wine-preloader` had 4 KB-aligned segments. Both Wine builds now link it
-16 KB aligned, and packaging fails if any runtime ELF is not 16 KB aligned.
+and libc (taken from Google's arm64 emulator image), and runs the same
+runtime test. It found that every process Wine starts died at exec: the
+static `wine-preloader` had 4 KB-aligned segments. Both Wine builds now link
+it 16 KB aligned, and packaging fails if any runtime ELF is not 16 KB aligned.
+
+With that and the FEX guard fix below, **both APKs pass all 15 runtime
+checks on 16 KB pages** (x64 and x86 programs through FEX, Vulkan, D3D11,
+D3D12, sound), as they do on 4 KB pages.
+
+Notes from getting there:
+
+- The VM emulates a Neoverse-N1. On QEMU's ARMv9 models (Cortex-A710 with or
+  without SVE, and `max`) x86 programs under FEX fail, but they fail the same
+  way on a 4 KB kernel and with Android 9's bionic, while the identical build
+  passes natively on the ARMv9 CI runner (Neoverse-N2). That is the emulator,
+  not the runtime.
+- Windows pages are 4 KB. On a 16 KB kernel Wine applies the union of the four
+  4 KB protections to each 16 KB page, so a no-access guard page or a
+  read-only page next to writable data is not enforced at 4 KB granularity.
+  FEX relied on two such guard pages: its call-ret stack's (the Proton
+  build's 32-bit wineboot step ran past it and left the 32-bit registry view
+  empty) and its JIT buffer's. Both FEX builds now use 64 KB guard regions
+  (`patches/fex-16k-guards.patch`, and Madeira's FEX patch). A game relying on
+  fine-grained guard pages or write traps of its own might still notice.
 
 **Not covered:** Wine's window, input and presentation on a real Android surface
 (`wineandroid.drv` needs the app's Java side, and Wine cannot run inside the
@@ -174,6 +194,11 @@ emulator's ARM translation), a real phone's GPU driver, a real speaker, and
 actual games. Those still need a physical-device run.
 
 ## Important unresolved integration risks
+
+The 32-bit Direct3D 11 device check sometimes hangs after its device was
+created (seen in about one run in four, both APKs, natively and in the VM):
+every thread of the program waits and lavapipe's threads are idle. It has not
+been diagnosed yet.
 
 Wine's legacy Android driver uses private native-window interfaces and a legacy
 loader search-path hook. Modern device/vendor compatibility is not established.
