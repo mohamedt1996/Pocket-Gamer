@@ -31,6 +31,7 @@ class AppSettings(context: Context) {
     private val _notInstalledCollapsed = bool("notInstalledCollapsed", false)
     private val _otherCollapsed = bool("otherCollapsed", false)
     private val _theme = str("theme", "system")
+    private val _steadyPerformance = bool("steadyPerformance", true)
 
     val layout: StateFlow<String> = _layout
     val sort: StateFlow<String> = _sort
@@ -45,6 +46,9 @@ class AppSettings(context: Context) {
     val otherCollapsed: StateFlow<Boolean> = _otherCollapsed
     /** "system", "dark" or "light". */
     val theme: StateFlow<String> = _theme
+    /** Android's sustained performance mode in game sessions: steady clocks the phone can
+     *  hold, instead of bursts followed by thermal throttling. */
+    val steadyPerformance: StateFlow<Boolean> = _steadyPerformance
 
     private fun put(key: String, flow: MutableStateFlow<Boolean>, v: Boolean) { flow.value = v; prefs.edit().putBoolean(key, v).apply() }
     private fun put(key: String, flow: MutableStateFlow<String>, v: String) { flow.value = v; prefs.edit().putString(key, v).apply() }
@@ -61,6 +65,7 @@ class AppSettings(context: Context) {
     fun setNotInstalledCollapsed(v: Boolean) = put("notInstalledCollapsed", _notInstalledCollapsed, v)
     fun setOtherCollapsed(v: Boolean) = put("otherCollapsed", _otherCollapsed, v)
     fun setTheme(v: String) = put("theme", _theme, v)
+    fun setSteadyPerformance(v: Boolean) = put("steadyPerformance", _steadyPerformance, v)
 
     /** The setup revision this device last finished or skipped (Onboarding). */
     var onboardingRevision: Int
@@ -93,6 +98,10 @@ data class GameConfig(
     /** Gamepad buttons to keys: "A" -> Android keycode name. */
     val binds: Map<String, String> = emptyMap(),
     val stickMouse: Boolean = true,
+    /** Frame cap: "auto", frames per second, or "off" (core.Performance). */
+    val frameCap: String = "auto",
+    /** CPU translation: "compatible", "balanced" or "fast" (core.Performance). */
+    val cpuMode: String = "balanced",
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("graphics", graphics); put("startWith", startWith); program?.let { put("program", it) }
@@ -100,10 +109,14 @@ data class GameConfig(
         put("performance", performance); put("environment", environment); put("dllOverrides", dllOverrides)
         put("lastPlayed", lastPlayed); put("added", added); put("apis", JSONArray(apis)); put("bits", bits); put("sizeBytes", sizeBytes)
         put("binds", JSONObject(binds as Map<*, *>)); put("stickMouse", stickMouse)
+        put("frameCap", frameCap); put("cpuMode", cpuMode)
     }
 
-    /** The graphics path a launch uses: the choice, or for "auto" the one the program's APIs suit. */
-    fun resolvedGraphics(): String = if (graphics != "auto") graphics else org.pocketarcade.madeira.core.PeInspector.recommendedGraphics(apis.toSet())
+    /** The graphics path a launch uses: the choice, or for "auto" the one the program's APIs suit,
+     *  stepped down to what this phone's GPU driver can run (GraphicsChoice). */
+    fun resolvedGraphics(gpu: org.pocketarcade.madeira.platform.GpuCaps.Info? = org.pocketarcade.madeira.platform.GpuCaps.current): String =
+        if (graphics != "auto") graphics
+        else org.pocketarcade.madeira.core.GraphicsChoice.fit(org.pocketarcade.madeira.core.PeInspector.recommendedGraphics(apis.toSet()), gpu)
 
     companion object {
         fun from(o: JSONObject?): GameConfig {
@@ -123,6 +136,8 @@ data class GameConfig(
                 lastPlayed = o.optLong("lastPlayed", 0), added = o.optLong("added", 0),
                 apis = apis, bits = o.optInt("bits", 0), sizeBytes = o.optLong("sizeBytes", 0),
                 binds = binds, stickMouse = o.optBoolean("stickMouse", true),
+                frameCap = o.optString("frameCap", "auto").let { if (it in org.pocketarcade.madeira.core.Performance.FRAME_CAPS) it else "auto" },
+                cpuMode = o.optString("cpuMode", "balanced").let { if (it in org.pocketarcade.madeira.core.Performance.CPU_MODES) it else "balanced" },
             )
         }
 

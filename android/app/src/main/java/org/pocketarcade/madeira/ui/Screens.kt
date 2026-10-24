@@ -8,6 +8,9 @@
 package org.pocketarcade.madeira.ui
 
 import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -200,7 +203,6 @@ fun OnboardingScreen(graph: AppGraph, nav: Navigator) {
     val colors = Madeira.colors
     var page by rememberSaveable { mutableIntStateOf(0) }
     val accountName by graph.account.accountName.collectAsState()
-    val components by graph.dock.components.collectAsState()
     val mono by graph.mono.state.collectAsState()
     fun finish() { graph.settings.onboardingRevision = OnboardingRevision; nav.popTo { it !is Screen.Onboarding } }
     val last = 4
@@ -221,7 +223,7 @@ fun OnboardingScreen(graph: AppGraph, nav: Navigator) {
                         }
                         Spacer(Modifier.height(24.dp))
                         Text("Pocket Arcade", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        Text("Built on Madeira", style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.7f))
+                        Text("Steam and Epic games on Android", style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.7f))
                         Spacer(Modifier.height(8.dp))
                         Text("Your Windows games, on Android. Sign in to Steam, download your library, and play with touch controls or a controller.",
                             style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center)
@@ -232,14 +234,13 @@ fun OnboardingScreen(graph: AppGraph, nav: Navigator) {
                         else { Paragraph("Sign in to see your library and download games. You can also do this later from the library."); SignInForm(graph) }
                     }
                     2 -> Column {
-                        Title("Madeira Dock")
-                        Paragraph("Steam games start through Valve's own Steam client, so Steam's licence checks, DRM and overlay-free sign-in work as they do on a PC. " +
-                            "Madeira Dock downloads Valve's client components (about ${formatBytes(SteamRuntimeFiles.totalBytes)}) straight from Valve and checks each one.")
-                        ComponentsCard(graph, components)
+                        Title("Pocket Dock")
+                        Paragraph("Pocket Dock downloads your Steam games with your Steam account and starts their Windows programs using Linux Proton. An X11 display is required; Steam client DRM and Steamworks features are not guaranteed.")
+                        PocketDockSetup(graph)
                     }
                     3 -> Column {
                         Title(".NET Framework")
-                        Paragraph("Games built on .NET or XNA need Wine Mono, Wine's .NET Framework (about 80 MB from WineHQ). Most games do not; you can add it later in Settings.")
+                        Paragraph("Wine Mono is for the optional legacy Android Wine path. Pocket Dock uses Linux Proton.")
                         MonoCard(graph, mono)
                     }
                     else -> Column(Modifier.fillMaxWidth().padding(Gutter), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -318,7 +319,6 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
     val context = LocalContext.current
     val s = graph.settings
     val accountName by graph.account.accountName.collectAsState()
-    val components by graph.dock.components.collectAsState()
     val mono by graph.mono.state.collectAsState()
     val cloud by s.steamCloud.collectAsState()
     val cloudAuto by s.cloudAutomatic.collectAsState()
@@ -327,6 +327,7 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
     val metal by s.liquidMetal.collectAsState()
     val ambient by s.ambient.collectAsState()
     val diagnostics by s.diagnostics.collectAsState()
+    val steady by s.steadyPerformance.collectAsState()
     var confirmSignOut by remember { mutableStateOf(false) }
 
     PageFrame("Settings", { nav.pop() }) {
@@ -337,10 +338,7 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
                 SettingsRow("Sign out", tint = colors.red) { confirmSignOut = true }
             } else SettingsRow("Sign in to Steam", icon = Icons.AutoMirrored.Filled.Login, tint = colors.accent) { nav.push(Screen.SignIn) }
             RowDivider()
-            SettingsRow("Madeira Dock", when (components) {
-                DockModel.Components.Ready -> "Ready"; DockModel.Components.Missing -> "Not downloaded"
-                is DockModel.Components.Downloading -> "Downloading"; is DockModel.Components.Failed -> "Failed"
-            }, chevron = true) { nav.push(Screen.Dock) }
+            SettingsRow("Pocket Dock", if (org.pocketarcade.madeira.epic.LinuxProton.staged(context, false)) "Linux packages staged" else "Set up Proton", chevron = true) { nav.push(Screen.Dock) }
         }
         SettingsSection("Steam Cloud", footer = "Saves sync before a game starts and after it ends. Replaced copies are kept in the app's Steam Cloud Backups folder.") {
             ToggleRow("Steam Cloud", cloud) { s.setSteamCloud(it) }
@@ -373,8 +371,22 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
             RowDivider()
             ToggleRow("Ambient light", ambient, "Game artwork glows softly behind its card.") { s.setAmbient(it) }
         }
+        val gpu = org.pocketarcade.madeira.platform.GpuCaps.current
+        if (gpu != null) SettingsSection("GPU", footer =
+            "This checks the tablet's current Vulkan driver against the Android Wine graphics layers. Pocket Dock has a separate CPU-rendered Linux Vulkan driver. Direct3D 12 may still fail.") {
+            SettingsRow(gpu.name.ifBlank { "Graphics" }, gpu.summary().substringAfter(" · ", ""))
+            RowDivider()
+            SettingsRow("DXVK (Direct3D 8–11)", if (gpu.dxvk) "Driver features present" else "Driver features missing",
+                subtitle = gpu.dxvkMissing.take(5).takeIf { it.isNotEmpty() }?.joinToString(", "))
+            RowDivider()
+            SettingsRow("VKD3D-Proton (Direct3D 12)", if (gpu.vkd3d) "Driver features present" else "Driver features missing",
+                subtitle = gpu.vkd3dMissing.take(5).takeIf { it.isNotEmpty() }?.joinToString(", "))
+        }
+        SettingsSection("Heat", footer = "Each game's frame cap and CPU mode are in its settings. Android's battery game mode (game dashboard or the phone's game booster) lowers the automatic frame cap to 30.") {
+            ToggleRow("Steady performance", steady, "Steady speeds the phone can hold, instead of bursts that heat it up and then slow down. On phones that support it.") { s.setSteadyPerformance(it) }
+        }
         SettingsSection("Troubleshooting") {
-            SettingsRow("Windows desktop", subtitle = "Opens Explorer in the Steam games' Windows environment.", icon = Icons.Filled.DesktopWindows) { startDesktop(graph, context) }
+            SettingsRow("Windows desktop", subtitle = "Starts Explorer through Pocket Dock's Linux Proton runtime.", icon = Icons.Filled.DesktopWindows) { startDesktop(graph, context) }
             RowDivider()
             ToggleRow("Diagnostics", diagnostics, "More detail in the game log, for reporting problems. Slower.") { s.setDiagnostics(it) }
             RowDivider()
@@ -389,7 +401,7 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
         SettingsSection("About", footer = "Pocket Arcade is free software under the GNU GPL, version 3 or later, built on Madeira by Jfishin and 125hz. Steam is a trademark of Valve; this app is not affiliated with Valve.") {
             SettingsRow("Version", BuildConfig.VERSION_NAME)
             RowDivider()
-            SettingsRow("Wine", if (BuildConfig.WINE_VARIANT == "madeira") "Madeira Wine" else "Proton Wine")
+            SettingsRow("Wine", "Proton Wine")
             RowDivider()
             SettingsRow("Licences", chevron = true) { nav.push(Screen.Licenses) }
         }
@@ -400,32 +412,90 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
         dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text("Cancel") } })
 }
 
-// MARK: Madeira Dock
+// MARK: Pocket Dock
+
+@Composable
+private fun PocketDockSetup(graph: AppGraph) {
+    val colors = Madeira.colors
+    val context = LocalContext.current
+    val state by graph.epic.state.collectAsState()
+    val packages = remember(state.componentRevision) { org.pocketarcade.madeira.epic.LinuxProtonInstaller.bundled(context) }
+    val rootfsReady = org.pocketarcade.madeira.epic.LinuxProtonInstaller.installed(context,
+        org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.ROOTFS)
+    val protonReady = org.pocketarcade.madeira.epic.LinuxProtonInstaller.installed(context,
+        org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.PROTON)
+    val box64 = org.pocketarcade.madeira.epic.RuntimeComponents.box64Available(context)
+    val box32 = org.pocketarcade.madeira.epic.RuntimeComponents.box32Available(context)
+    val ready = org.pocketarcade.madeira.epic.LinuxProton.staged(context, false)
+    var display by rememberSaveable { mutableStateOf(org.pocketarcade.madeira.model.PocketDock.display(context)) }
+    var desktopStatus by remember { mutableStateOf<String?>(null) }
+    var pickingComponent by rememberSaveable { mutableStateOf<String?>(null) }
+    val packagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) pickingComponent?.let {
+            graph.epic.importLinuxComponent(org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.valueOf(it), uri)
+        }
+        pickingComponent = null
+    }
+    SettingsSection("Linux Proton") {
+        SettingsRow("Pocket Dock Linux packages", if (ready) "Staged; launch unverified" else "Needs setup")
+        SettingsRow("x86-64 Linux rootfs", if (rootfsReady) "Installed" else "Missing")
+        SettingsRow("Proton Wine runtime", if (protonReady) "Installed" else "Missing")
+        SettingsRow("Box64 x86-64 Linux translator", if (box64) "Installed" else "Missing")
+        SettingsRow("Box32 i386 Linux translator", if (box32) "Installed" else "Unavailable in this build")
+        SettingsRow("Android Wine/FEX runtime", if (org.pocketarcade.madeira.PortRuntime(context).bundled())
+            "Included in APK" else "Not included in this APK")
+        if (packages.isNotEmpty()) SettingsRow(
+            if (rootfsReady && protonReady) "Repair included Linux packages" else "Install included Linux packages",
+            "Proton and x86-64 Linux rootfs", icon = Icons.Filled.FileDownload, tint = colors.accent) {
+            if (!state.busy) {
+                if (rootfsReady && protonReady) graph.epic.repairBundledLinux() else graph.epic.installBundledLinux()
+            }
+        }
+        else SettingsRow("Included Linux packages", "Missing from this APK", tint = colors.red)
+        for (component in listOf(org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.ROOTFS,
+            org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.PROTON)) {
+            SettingsRow("Import ${component.folder} .tar.gz", icon = Icons.Filled.FileDownload, tint = colors.accent) {
+                if (!state.busy) {
+                    pickingComponent = component.name
+                    packagePicker.launch(arrayOf("*/*"))
+                }
+            }
+        }
+        RowDivider()
+        if (org.pocketarcade.madeira.epic.RuntimeComponents.box32Bundled(context))
+            SettingsRow(if (box32) "Repair Box64 + Box32" else "Install Box64 + Box32", icon = Icons.Filled.FileDownload,
+                tint = colors.accent) { if (!state.busy) graph.epic.installBox64() }
+        else SettingsRow(if (box64) "Repair Box64" else "Install Box64", icon = Icons.Filled.FileDownload,
+            tint = colors.accent) { if (!state.busy) graph.epic.installBox64() }
+        state.bundleProgress?.let { Paragraph(it) }
+        state.box64Probe?.let { Paragraph(it) }
+        state.error?.let { Paragraph(it) }
+    }
+    SettingsSection("Display") {
+        OutlinedTextField(display, { display = it }, label = { Text("X11 DISPLAY") }, modifier = Modifier.fillMaxWidth())
+        SettingsRow("Save display", display, tint = colors.accent) {
+            runCatching { org.pocketarcade.madeira.model.PocketDock.setDisplay(context, display) }
+                .onFailure { graph.epic.reportError(it.message ?: "Invalid X11 display") }
+        }
+    }
+    SettingsSection("Desktop") {
+        SettingsRow("Start Windows desktop", subtitle = "Uses Pocket Dock's Proton runtime and the saved X11 display.",
+            icon = Icons.Filled.DesktopWindows, tint = colors.accent) { startDesktop(graph, context) }
+        SettingsRow("Check last desktop run") {
+            desktopStatus = org.pocketarcade.madeira.epic.LinuxProton.statusText(
+                File(context.filesDir, "desktop-proton"))
+        }
+        desktopStatus?.let { Paragraph(it) }
+    }
+}
 
 @Composable
 fun DockScreen(graph: AppGraph, nav: Navigator) {
-    val colors = Madeira.colors
-    val components by graph.dock.components.collectAsState()
-    var confirmRemove by remember { mutableStateOf(false) }
-    val hostBundled = remember { graph.dock.bundled(graph.runtime.root()) || !graph.runtime.bundled() }
-    PageFrame("Madeira Dock", { nav.pop() }) {
-        Paragraph("Madeira Dock starts Steam games through Valve's Steam client, signed in with your account, without showing Steam's window. " +
-            "Games get Steam's licence check, DRM, achievements and Steamworks as they would on a PC.")
-        ComponentsCard(graph, components)
-        SettingsSection(footer = "Valve's client components come from client-update.akamai.steamstatic.com and are checked against the SHA-256 Madeira pins. They are Valve's software, under Valve's terms.") {
-            SettingsRow("Download size", formatBytes(SteamRuntimeFiles.totalBytes))
-            RowDivider()
-            SettingsRow("Dock host", if (hostBundled) "Included" else "Missing from this build", tint = if (hostBundled) null else colors.red)
-            if (components == DockModel.Components.Ready) {
-                RowDivider()
-                SettingsRow("Remove components", tint = colors.red) { confirmRemove = true }
-            }
-        }
+    PageFrame("Pocket Dock", { nav.pop() }) {
+        Paragraph("Sign in to Steam, download a Windows game from your library, then start it through the included Linux Proton stack. Keep a separate X11 display app running on this tablet.")
+        PocketDockSetup(graph)
+        Paragraph("Pocket Dock does not run Valve's Windows client. Games needing Steam DRM, Steamworks, or anti-cheat support may fail; use the game's own launch program when one is available.")
     }
-    if (confirmRemove) AlertDialog(onDismissRequest = { confirmRemove = false }, title = { Text("Remove Valve's client components?") },
-        text = { Text("Steam games will not start through Madeira Dock until you download them again. Installed games are kept.") },
-        confirmButton = { TextButton(onClick = { confirmRemove = false; graph.scope.launch { graph.dock.removeComponents(); graph.dock.refresh() } }) { Text("Remove", color = colors.red) } },
-        dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancel") } })
 }
 
 // MARK: Logs
@@ -494,6 +564,9 @@ private val NOTICES = listOf(
     Triple("VKD3D-Proton", "LGPL-2.1-or-later", "Direct3D 12 on Vulkan (github.com/HansKristian-Work/vkd3d-proton)."),
     Triple("Wine Mono", "MIT and others", "Downloaded from WineHQ on request."),
     Triple("Zstandard", "BSD-3-Clause", "Steam chunk decompression, from Madeira's decoder."),
+    Triple("GameNative Epic manifest parsers", "GPL-3.0", "Adapted Epic BuildPatch parsers; source and revision in android/EPIC-UPSTREAM.md."),
+    Triple("WoWBox64", "See upstream notices", "Optional download from GameNative; Box64 Wine module, experimental."),
+    Triple("Box64 Android", "MIT", "Optional Android ELF translator from GameNative; source project ptitSeb/box64."),
     Triple("OkHttp", "Apache-2.0", "Steam's connection manager WebSocket."),
     Triple("Coil", "Apache-2.0", "Game artwork."),
     Triple("ZXing", "Apache-2.0", "Sign-in QR codes."),

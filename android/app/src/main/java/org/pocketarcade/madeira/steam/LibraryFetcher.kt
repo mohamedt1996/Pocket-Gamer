@@ -80,14 +80,14 @@ class LibraryFetcher(private val session: CmSession) {
     }
 
     /** The app's metadata for an install, with the depots it shares from other apps resolved. */
-    suspend fun installInfo(appID: Int): AppInfo? {
+    suspend fun installInfo(appID: Int, os: String = "windows"): AppInfo? {
         coroutineContext.ensureActive()
         val app = appInfo(appID) ?: return null
         val owners = HashMap<Int, AppInfo>()
         owners[appID] = app
         val visited = hashSetOf(appID)
         val references = HashSet<String>()
-        fun eligible(d: DepotInfo) = !d.isSharedInstall && d.dlcAppID == null && d.supports("windows") && !d.lowViolence &&
+        fun eligible(d: DepotInfo) = !d.isSharedInstall && d.dlcAppID == null && d.supports(os) && !d.lowViolence &&
             (d.language.isEmpty() || d.language.equals("english", true))
         val pending = app.depots.filter { eligible(it) && it.publicManifestID == null && it.fromApp != null }
             .map { it.fromApp!! to it.depotID }.toMutableList()
@@ -112,7 +112,7 @@ class LibraryFetcher(private val session: CmSession) {
         val missing = app.depots.count { eligible(it) && it.fromApp != null && it.publicManifestID == null }
         SteamLog.event("[steam-shared] app=$appID owners=${visited.size - 1} resolved=$resolved missing=$missing")
         if (missing > 0) throw SteamException(SteamError.ManifestFetchFailed("Steam did not provide required shared content metadata. Refresh and retry the download."))
-        for (id in app.installDepots().mapNotNull { it.fromApp }.toSet().minus(appID).sorted()) {
+        for (id in app.installDepots(os).mapNotNull { it.fromApp }.toSet().minus(appID).sorted()) {
             coroutineContext.ensureActive()
             if (owners[id] == null) {
                 if (owners.size > 64) break

@@ -16,7 +16,7 @@ if [ ! -x "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android2
   ln -s "$SDK/ndk/27.3.13750724" "$NDK"
 fi
 printf 'LLVM_MINGW=%s\nANDROID_NDK_HOME=%s\n' "$MINGW" "$NDK" >> "$GITHUB_ENV"
-if [ "${1:-}" = wine ] || [ "${1:-}" = wine-madeira ]; then
+if [ "${1:-}" = wine ]; then
   DEST="$HOME/termuxfs/aarch64"
   if [ ! -d "$DEST/data/data/com.termux/files/usr/lib" ]; then
     # Official Termux packages (termux-main + termux-x11), SHA256-checked

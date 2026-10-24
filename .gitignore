@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+android/.gradle/
+android/.kotlin/
+android/app/.cxx/
+android/app/build/
+android/app/src/main/assets/linux-proton/
+.android-out/linux-proton/

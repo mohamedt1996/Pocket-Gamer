@@ -78,6 +78,7 @@ class LibraryDataTest {
         assertEquals(-1L, app.depots.first { it.depotID == 441 }.publicManifestID)
         assertEquals(2500L, app.depots.first { it.depotID == 441 }.publicDownloadBytes)
         assertEquals(listOf(441, 443), app.installDepots().map { it.depotID })
+        assertEquals(listOf(441, 444), app.installDepots("linux").map { it.depotID })
         assertEquals(2500L + 0, app.downloadSize())
         assertEquals(228980, app.depots.first { it.depotID == 449 }.fromApp)
         assertTrue(app.installableOnWindows)

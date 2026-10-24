@@ -28,6 +28,17 @@ def replace(path, old, new):
 
 
 
+# 16 KB page kernels (Android 15+ devices) refuse to exec an ELF whose segments are 4 KB
+# aligned, and for the static wine-preloader the kernel finds out after the point of no
+# return: every process Wine starts (wineboot, explorer, the game) died with SIGSEGV. Its
+# text address (0x7d400000) is already 16 KB aligned; only the segment alignment was missing.
+# The preloader reads the real page size from AT_PAGESZ, so nothing else depends on it.
+for script in ('configure.ac', 'configure'):   # configure: only when the tree ships one
+    if not (root / script).exists(): continue
+    replace(script,
+            'WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000"',
+            'WINEPRELOADER_LDFLAGS="-static -nostartfiles -nodefaultlibs -Wl,-Ttext=0x7d400000 -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"')
+
 # Wine's host winebuild otherwise discovers Ubuntu's LLVM 18 dlltool even
 # when the Android cross-compiler uses the pinned llvm-mingw toolchain.
 # Honour an explicit DLLTOOL in the host generator, fail-closed if missing.
@@ -73,6 +84,80 @@ replace('dlls/ntdll/unix/loader.c',
         '    char error[1024];\n    int i, argc, length;',
         '    char error[1024] = "Wine initialization returned unexpectedly";\n'
         '    int i, argc, length;')
+
+# win32u self-deadlock on a program's first Vulkan call (seen in the runtime test,
+# both trees): vulkan_init_once maps instance extensions through the lazy driver,
+# which loads the display driver; loading it refreshes the display devices, which
+# registers the GPU through D3DKMT, whose vulkan instance asks for
+# __wine_get_vulkan_driver again on the same thread. pthread_once then waits for
+# itself and the program hangs. It happens whenever a process reaches Vulkan
+# before anything in it loaded the display driver (a DXGI factory created before
+# the first window, a game started while the desktop is still initialising).
+# A nested call on the initialising thread now gets "no Vulkan", and D3DKMT's
+# instance is created on a later call instead of being latched as missing.
+replace('dlls/win32u/vulkan.c',
+        'static void vulkan_init_once(void)\n{\n',
+        'struct gdi_dc_funcs;\n'
+        'extern const struct gdi_dc_funcs *get_display_driver(void); /* ntgdi_private.h */\n\n'
+        'static pthread_t vulkan_init_thread;\n'
+        'static volatile int vulkan_init_running;\n\n'
+        '/* whether this thread is inside vulkan_init_once (see __wine_get_vulkan_driver) */\n'
+        'BOOL vulkan_init_in_progress(void)\n'
+        '{\n'
+        '    return vulkan_init_running && pthread_equal( vulkan_init_thread, pthread_self() );\n'
+        '}\n\n'
+        'static void vulkan_init_once_body(void);\n\n'
+        'static void vulkan_init_once(void)\n'
+        '{\n'
+        '    vulkan_init_thread = pthread_self();\n'
+        '    vulkan_init_running = 1;\n'
+        '    vulkan_init_once_body();\n'
+        '    vulkan_init_running = 0;\n'
+        '}\n\n'
+        'static void vulkan_init_once_body(void)\n{\n')
+replace('dlls/win32u/vulkan.c',
+        '    pthread_once( &init_once, vulkan_init_once );\n'
+        '    if (!vulkan_handle) return NULL;\n',
+        '    /* Load the display driver (and refresh the display devices) before\n'
+        '     * initialising Vulkan, as any process with a window already has. Done\n'
+        '     * from inside vulkan_init_once instead, the refresh registers the GPU\n'
+        '     * through D3DKMT, which needs this Vulkan driver: a wait on ourselves. */\n'
+        '    if (!vulkan_init_in_progress()) get_display_driver();\n'
+        '    /* Should anything else still lead back here during the initialisation\n'
+        '     * on this thread, answer "no Vulkan" rather than wait for ourselves. */\n'
+        '    if (vulkan_init_in_progress()) return NULL;\n'
+        '    pthread_once( &init_once, vulkan_init_once );\n'
+        '    if (!vulkan_handle) return NULL;\n')
+replace('dlls/win32u/d3dkmt.c',
+        'static struct vulkan_instance *get_d3dkmt_vulkan_instance(void)\n'
+        '{\n'
+        '    static pthread_once_t once = PTHREAD_ONCE_INIT;\n'
+        '    pthread_once( &once, d3dkmt_init_vulkan );\n'
+        '    return d3dkmt_vulkan_instance;\n'
+        '}\n',
+        'extern BOOL vulkan_init_in_progress(void);\n\n'
+        'static struct vulkan_instance *get_d3dkmt_vulkan_instance(void)\n'
+        '{\n'
+        '    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;\n'
+        '    static pthread_t init_thread;\n'
+        '    static volatile int done, running;\n\n'
+        '    if (done) return d3dkmt_vulkan_instance;\n'
+        '    /* During win32u\'s own Vulkan initialisation on this thread, or our own:\n'
+        '     * no instance yet, and try again on a later call rather than for good. */\n'
+        '    if (vulkan_init_in_progress()) return NULL;\n'
+        '    if (running && pthread_equal( init_thread, pthread_self() )) return NULL;\n'
+        '    pthread_mutex_lock( &lock );\n'
+        '    if (!done)\n'
+        '    {\n'
+        '        init_thread = pthread_self();\n'
+        '        running = 1;\n'
+        '        d3dkmt_init_vulkan();\n'
+        '        running = 0;\n'
+        '        done = 1;\n'
+        '    }\n'
+        '    pthread_mutex_unlock( &lock );\n'
+        '    return d3dkmt_vulkan_instance;\n'
+        '}\n')
 
 if madeira:
     sys.exit(0)

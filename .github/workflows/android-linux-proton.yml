@@ -1,0 +1,293 @@
+name: Android Wine/FEX and Linux Proton APK
+
+on:
+  push:
+    branches: [main, fix/android-runtime]
+    tags: ['android-proton-v*']
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish this build as a GitHub pre-release (run from main)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  android_components:
+    name: Android ARM64EC component - ${{ matrix.component }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [wine, fex, graphics, addons]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute pinned source key
+        id: source_key
+        run: echo "value=$(python3 runtime/android/component-key.py '${{ matrix.component }}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: android-ccache-${{ matrix.component }}-${{ steps.source_key.outputs.value }}
+          restore-keys: android-ccache-${{ matrix.component }}-
+      - uses: actions/cache@v4
+        id: component
+        with:
+          path: .android-out/${{ matrix.component }}
+          key: android-native-v2-${{ matrix.component }}-${{ steps.source_key.outputs.value }}
+      - name: Install native build tools
+        if: steps.component.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git curl unzip flex bison gettext autoconf automake libtool pkg-config ninja-build cmake meson glslang-tools mingw-w64 gcc-multilib g++-multilib libwayland-bin libfreetype6-dev libpng-dev zlib1g-dev ccache python3-ply
+      - uses: actions/cache@v4
+        if: steps.component.outputs.cache-hit != 'true'
+        with:
+          path: |-
+            ~/toolchains
+            ~/Android/Sdk/ndk/27.3.13750724
+            ~/termuxfs/aarch64
+          key: android-tools-bylaws20250920-ndk27d-termux-official-v1-${{ matrix.component }}
+      - name: Set up pinned toolchains
+        if: steps.component.outputs.cache-hit != 'true'
+        run: bash runtime/android/setup-tools.sh "${{ matrix.component }}"
+      - name: Build Android component
+        if: steps.component.outputs.cache-hit != 'true'
+        run: bash "runtime/android/build-${{ matrix.component }}.sh"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Android-component-${{ matrix.component }}
+          path: .android-out/${{ matrix.component }}
+          if-no-files-found: error
+          include-hidden-files: true
+
+  build:
+    needs: android_components
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-component-wine
+          path: .android-out/wine
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-component-fex
+          path: .android-out/fex
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-component-graphics
+          path: .android-out/graphics
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-component-addons
+          path: .android-out/addons
+      - name: Package Android Wine/FEX and both Windows architectures
+        run: |
+          sudo apt-get install -y -qq patchelf
+          python3 runtime/android/package-runtime.py
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Configure Android SDK and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER=$(find "$SDK/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)
+          "$SDKMANAGER" --sdk_root="$SDK" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.3.13750724' 'cmake;3.22.1'
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "$SDK/build-tools/35.0.0" >> "$GITHUB_PATH"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Fetch GE-Proton and build the x86-64 rootfs
+        env:
+          EAC_RUNTIME_URL: ${{ secrets.PROTON_EAC_RUNTIME_URL }}
+          EAC_RUNTIME_SHA256: ${{ vars.PROTON_EAC_RUNTIME_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$EAC_RUNTIME_URL" && -z "$EAC_RUNTIME_SHA256" ]]; then
+            runtime/android/build-linux-proton-packages.sh
+          else
+            [[ -n "$EAC_RUNTIME_URL" && "$EAC_RUNTIME_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || {
+              echo "Set both PROTON_EAC_RUNTIME_URL and PROTON_EAC_RUNTIME_SHA256" >&2; exit 1;
+            }
+            curl -fLsS --retry 3 --output "$RUNNER_TEMP/proton-eac-runtime.tar.gz" "$EAC_RUNTIME_URL"
+            actual=$(sha256sum "$RUNNER_TEMP/proton-eac-runtime.tar.gz" | cut -d' ' -f1)
+            [[ "$actual" == "${EAC_RUNTIME_SHA256,,}" ]] || { echo "EAC archive checksum mismatch" >&2; exit 1; }
+            runtime/android/build-linux-proton-packages.sh --eac "$RUNNER_TEMP/proton-eac-runtime.tar.gz"
+          fi
+      - name: Test real packages and build the bundled APK
+        working-directory: android
+        env:
+          LINUX_PROTON_REAL_ARCHIVES: ${{ github.workspace }}/android/app/src/main/assets/linux-proton
+        run: |
+          gradle --no-daemon --max-workers=2 \
+            -Dorg.gradle.jvmargs='-Xmx12g -Dfile.encoding=UTF-8' \
+            --console=plain testDebugUnitTest assembleDebug
+      - name: Verify APK, native libraries and included archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          python3 runtime/android/check-apk.py "$apk"
+          python3 runtime/android/verify-linux-proton-apk.py "$apk" --require-android-runtime
+          aapt2 dump badging "$apk" >/dev/null
+          apksigner verify --verbose "$apk"
+          zipalign -c -v 4 "$apk" >/dev/null
+      - name: Build smaller Android APK with importable Linux archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/full.apk"
+          mv android/app/src/main/assets/linux-proton "$RUNNER_TEMP/linux-proton-assets"
+          (cd android && gradle --no-daemon --max-workers=2 \
+            -Dorg.gradle.jvmargs='-Xmx12g -Dfile.encoding=UTF-8' \
+            --console=plain clean assembleDebug)
+          mv "$RUNNER_TEMP/linux-proton-assets" android/app/src/main/assets/linux-proton
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          python3 runtime/android/check-apk.py "$apk"
+          python3 runtime/android/verify-linux-proton-apk.py "$apk" --native-only
+          aapt2 dump badging "$apk" >/dev/null
+          apksigner verify --verbose "$apk"
+          zipalign -c -v 4 "$apk" >/dev/null
+      - name: Stage downloadable files and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp "$RUNNER_TEMP/full.apk" \
+            release-assets/PocketArcade-Android-Linux-Proton-arm64-debug.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+            release-assets/PocketArcade-Android-Wine-FEX-arm64-lite-debug.apk
+          cp android/app/src/main/assets/linux-proton/proton.tgz \
+            release-assets/GE-Proton11-11-x86_64.tgz
+          cp android/app/src/main/assets/linux-proton/rootfs.tgz \
+            release-assets/Debian-bookworm-x86_64-i386-rootfs.tgz
+          if [[ -f android/app/src/main/assets/linux-proton/eac_runtime.tgz ]]; then
+            cp android/app/src/main/assets/linux-proton/eac_runtime.tgz \
+              release-assets/Proton-EasyAntiCheat-Runtime.tgz
+          fi
+          cp android/app/src/main/assets/linux-proton/manifest.json \
+            release-assets/linux-proton-manifest.json
+          cp android/app/src/main/assets/madeira-runtime.zip \
+            release-assets/PocketArcade-Android-Wine-FEX-arm64ec.zip
+          cp android/app/src/main/assets/madeira-runtime.sha256 \
+            release-assets/PocketArcade-Android-Wine-FEX-arm64ec.sha256
+          cp android/app/src/main/assets/runner/box64-android-arm64-16k.zst \
+            release-assets/box64-android-arm64-16k.zst
+          if [[ -f android/app/src/main/assets/runner/box64-box32-android-arm64-16k.zst ]]; then
+            cp android/app/src/main/assets/runner/box64-box32-android-arm64-16k.zst \
+              release-assets/box64-box32-android-arm64-16k.zst
+            cp android/app/src/main/assets/runner/box64-box32-android-arm64-16k.json \
+              release-assets/box64-box32-android-arm64-16k.json
+          fi
+          cp android/app/src/main/assets/runner/BOX64-LICENSE.txt release-assets/BOX64-LICENSE.txt
+          cp android/LINUX-PROTON.md release-assets/LINUX-PROTON.md
+          cp android/POCKET-DOCK.md release-assets/POCKET-DOCK.md
+          cp android/MI-PAD-7-RUNTIME.md release-assets/MI-PAD-7-RUNTIME.md
+          cp android/EAC-SETUP.md release-assets/EAC-SETUP.md
+          (cd release-assets && sha256sum -- * > SHA256SUMS.txt)
+          for f in release-assets/*; do
+            test "$(stat -c %s "$f")" -lt 2147483648 || { echo "Too large for a GitHub release: $f"; exit 1; }
+          done
+      - name: Upload downloadable build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketArcade-Android-Linux-Proton
+          path: release-assets/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+      - name: Upload APK for Android package-manager smoke test
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketArcade-lite-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  install_smoke:
+    name: Install combined APK in Android package manager
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketArcade-lite-apk
+          path: apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -partition-size 8192
+          script: |
+            adb install apk/app-debug.apk
+            adb shell pm path org.pocketarcade.madeira
+
+  release:
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/android-proton-v')) ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref == 'refs/heads/main')
+    needs: [build, install_smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketArcade-Android-Linux-Proton
+          path: release-assets
+      - name: Verify and publish pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release-assets && sha256sum -c SHA256SUMS.txt)
+          if [[ "$GITHUB_REF" == refs/tags/android-proton-v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="android-proton-${GITHUB_RUN_NUMBER}"
+          fi
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release $tag already exists" >&2
+            exit 1
+          fi
+          if [[ -f release-assets/Proton-EasyAntiCheat-Runtime.tgz ]]; then
+            eac_note="The APK also includes the official Proton EasyAntiCheat Runtime supplied for this build. This does not guarantee EAC server acceptance or Rocket League online play."
+          else
+            eac_note="The official Proton EasyAntiCheat Runtime is a separate Steam tool and is not in this APK. Sign in to Steam in the app and use **Install EAC runtime from Steam** in the Epic screen. See EAC-SETUP.md for an import fallback."
+          fi
+          cat > release-notes.md <<EOF
+          Pocket Arcade combined Android Wine/FEX and Linux Proton build from commit ${GITHUB_SHA}.
+
+          For tablets whose package manager rejects very large APKs, install \`PocketArcade-Android-Wine-FEX-arm64-lite-debug.apk\`. It includes Android ARM64EC Proton-Wine/FEX and Box64. Import the separate GE-Proton and multiarch Debian .tgz assets under **Settings → Pocket Dock**. The larger \`PocketArcade-Android-Linux-Proton-arm64-debug.apk\` embeds them. Pocket Dock uses CPU-rendered Vulkan and a separate X11 display; its 32-bit Linux translator and Adreno-accelerated Linux Vulkan remain unavailable. Select **Android Wine/FEX** for the native Android GPU path and Windows x86/x64 games.
+
+          ${eac_note} EAC support also depends on the game's publisher. Proton execution and Rocket League matchmaking have not been verified on the Mi Pad 7.
+
+          These APKs are debug-signed and experimental. Each Actions run creates a different debug signing key, so Android cannot install a new run as an update over an older alpha. Back up app data before uninstalling an older build. See \`LINUX-PROTON.md\` for setup and limitations.
+          EOF
+          gh release create "$tag" release-assets/* --repo "$GH_REPO" \
+            --target "$GITHUB_SHA" --title "Pocket Arcade Android Wine/FEX + Proton $tag" \
+            --notes-file release-notes.md --prerelease

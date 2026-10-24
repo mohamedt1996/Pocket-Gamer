@@ -490,14 +490,21 @@ class SessionOverlay private constructor(private val activity: Activity, private
         Thread {
             try {
                 val runtime = PortRuntime(activity)
-                val env = WineLaunch.environment(activity, runtime.root(), spec)
+                // Only what wineserver -k needs: re-running environment() would copy DLLs and reset pads.
+                val env = WineLaunch.serverEnvironment(activity, runtime.root(), spec)
                 val pb = ProcessBuilder(File(runtime.root(), "bin/wineserver").absolutePath, "-k")
                 pb.environment().putAll(env)
                 pb.redirectErrorStream(true)
                 val p = pb.start()
                 if (!p.waitFor(5, TimeUnit.SECONDS)) p.destroyForcibly()
-            } catch (_: Exception) {}
-            android.os.Process.killProcess(android.os.Process.myPid())
+            } catch (e: Exception) {
+                android.util.Log.w("madeira", "wineserver -k failed", e)
+            }
+            SessionState.markEnded(activity)
+            main.post {
+                activity.finishAndRemoveTask()
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }
         }.start()
     }
 

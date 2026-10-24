@@ -42,6 +42,15 @@ data class LaunchSpec(
     val dockReport: String? = null,
     val dockInstallerResults: String? = null,
     val diagnostics: Boolean = false,
+    /** core.Performance choices, and Android's sustained performance mode. */
+    val frameCap: String = "auto",
+    val cpuMode: String = "balanced",
+    val steadyPerformance: Boolean = true,
+    /** Optional x86 translator; x64 stays on the bundled FEX ARM64EC module. */
+    val translator32: String = "fex",
+    /** App-private, credential-free Epic EAC report and optional Wine loader trace. */
+    val eacReport: String? = null,
+    val eacDiagnostics: Boolean = false,
 ) {
     fun toJson(): String = JSONObject().apply {
         put("home", home); put("command", command); put("workingDir", workingDir); put("title", title)
@@ -50,6 +59,9 @@ data class LaunchSpec(
         put("binds", JSONObject(binds as Map<*, *>)); put("stickMouse", stickMouse); put("steamAppID", steamAppID)
         dockReport?.let { put("dockReport", it) }; dockInstallerResults?.let { put("dockInstallerResults", it) }
         put("diagnostics", diagnostics)
+        put("frameCap", frameCap); put("cpuMode", cpuMode); put("steadyPerformance", steadyPerformance)
+        put("translator32", translator32)
+        eacReport?.let { put("eacReport", it) }; put("eacDiagnostics", eacDiagnostics)
     }.toString()
 
     companion object {
@@ -67,6 +79,10 @@ data class LaunchSpec(
                 dockReport = o.optString("dockReport", "").ifEmpty { null },
                 dockInstallerResults = o.optString("dockInstallerResults", "").ifEmpty { null },
                 diagnostics = o.optBoolean("diagnostics"),
+                frameCap = o.optString("frameCap", "auto"), cpuMode = o.optString("cpuMode", "balanced"),
+                steadyPerformance = o.optBoolean("steadyPerformance", true),
+                translator32 = o.optString("translator32", "fex").also { require(it in listOf("fex", "wowbox64")) },
+                eacReport = o.optString("eacReport", "").ifEmpty { null }, eacDiagnostics = o.optBoolean("eacDiagnostics"),
             )
         }
 
@@ -97,9 +113,12 @@ class WineLaunch private constructor(
                 ?: legacy(activity, intent).also { intent.putExtra(LaunchSpec.EXTRA, it.toJson()) }
             val runtime = PortRuntime(activity)
             runtime.installBundled()
+            if (spec.eacDiagnostics && spec.eacReport != null) File(spec.home, "wine.log").delete()
             val env = environment(activity, runtime.root(), spec)
             NativeEnvironment.prepare(env["LD_LIBRARY_PATH"], spec.workingDir.ifEmpty { spec.home }, env["TMPDIR"])
             SessionState.markRunning(activity, spec)
+            GameSessionService.start(activity, spec.title)
+            Thermals.attach(activity, spec)
             return WineLaunch(spec.command, env, File(runtime.root(), "lib/wine/aarch64-unix/ntdll.so").absolutePath, spec)
         }
 
@@ -135,6 +154,52 @@ class WineLaunch private constructor(
             symlink(File(dos, "z:"), "/")
         }
 
+        /**
+         * The registry a new prefix starts from, written before Wine's first start.
+         *
+         * system.reg must say `#arch=win64`: wineserver treats an existing system.reg without an
+         * arch line as a 32-bit prefix, and a 64-bit Wine then refuses to start in it.
+         * The Wine driver choice is read from HKCU (user.reg), not HKLM.
+         */
+        @JvmStatic
+        fun seedRegistry(prefix: File) {
+            prefix.mkdirs()
+            val system = File(prefix, "system.reg")
+            if (!system.exists()) {
+                system.writeText(REGISTRY_HEADER + ";; All keys relative to \\\\Machine\n\n#arch=win64\n\n" +
+                    "[Software\\\\Microsoft\\\\Wow64\\\\amd64]\n@=\"libarm64ecfex.dll\"\n\n" +
+                    "[Software\\\\Microsoft\\\\Wow64\\\\x86]\n@=\"libwow64fex.dll\"\n\n")
+            } else {
+                // Prefixes seeded by earlier versions lack the arch line; Wine always writes one itself.
+                val text = system.readText()
+                if (!text.lineSequence().any { it.startsWith("#arch=") } && text.startsWith(REGISTRY_HEADER)) {
+                    system.writeText(REGISTRY_HEADER + "\n#arch=win64\n" + text.removePrefix(REGISTRY_HEADER))
+                }
+            }
+            val user = File(prefix, "user.reg")
+            if (!user.exists()) {
+                user.writeText(REGISTRY_HEADER + "\n#arch=win64\n\n" + DRIVERS_KEY + DIRECT3D_KEY)
+            } else {
+                val text = user.readText()
+                if (!text.contains("[Software\\\\Wine\\\\Drivers]")) user.appendText("\n" + DRIVERS_KEY)
+                if (!text.contains("[Software\\\\Wine\\\\Direct3D]")) user.appendText("\n" + DIRECT3D_KEY)
+            }
+        }
+
+        private const val REGISTRY_HEADER = "WINE REGISTRY Version 2\n"
+        private const val DRIVERS_KEY = "[Software\\\\Wine\\\\Drivers]\n\"Audio\"=\"directaudio\"\n\"Graphics\"=\"android\"\n\n"
+        // Wine's own Direct3D (wined3d) defaults to desktop OpenGL, which Android does not have
+        // (only OpenGL ES): use its Vulkan renderer, on the phone's GPU.
+        private const val DIRECT3D_KEY = "[Software\\\\Wine\\\\Direct3D]\n\"renderer\"=\"vulkan\"\n\n"
+
+        /** Just enough environment for `wineserver -k` to find the prefix's server. */
+        fun serverEnvironment(context: Context, root: File, spec: LaunchSpec): HashMap<String, String> = hashMapOf(
+            "HOME" to spec.home,
+            "TMPDIR" to File(spec.home, "tmp").absolutePath,
+            "WINEPREFIX" to File(spec.home, "prefix").absolutePath,
+            "LD_LIBRARY_PATH" to File(root, "lib").absolutePath + ":" + File(root, "lib/wine/aarch64-unix").absolutePath + ":" + context.applicationInfo.nativeLibraryDir,
+        )
+
         private fun copyDlls(source: File, dest: File, names: Map<String, String>? = null) {
             dest.mkdirs()
             val files = source.listFiles { _, n -> n.endsWith(".dll") } ?: return
@@ -153,28 +218,34 @@ class WineLaunch private constructor(
             val tmp = File(home, "tmp")
             prefix.mkdirs(); tmp.mkdirs()
             prepareDrives(prefix)
-            val registry = File(prefix, "system.reg")
-            if (!registry.exists()) {
-                registry.writeText("WINE REGISTRY Version 2\n\n[Software\\\\Microsoft\\\\Wow64\\\\amd64]\n@=\"libarm64ecfex.dll\"\n\n" +
-                    "[Software\\\\Microsoft\\\\Wow64\\\\x86]\n@=\"libwow64fex.dll\"\n\n[Software\\\\Wine\\\\Drivers]\n\"Graphics\"=\"android\"\n\"Audio\"=\"directaudio\"\n")
-            }
+            seedRegistry(prefix)
+            org.pocketarcade.madeira.epic.RuntimeComponents.configure(context, prefix, spec.translator32)
             val system32 = File(prefix, "drive_c/windows/system32")
             val syswow64 = File(prefix, "drive_c/windows/syswow64")
             val env = HashMap<String, String>()
             env["HOME"] = home.absolutePath
             env["TMPDIR"] = tmp.absolutePath
             env["WINEPREFIX"] = prefix.absolutePath
-            env["WINELOADER"] = File(root, "bin/wine").absolutePath
+            // Wine's loader finds ntdll.so next to itself. bin/wine is a plain copy once the runtime
+            // is zipped (no symlinks), so every process Wine starts through it would fail with
+            // "could not load ntdll.so". Children are exec'd through WINELOADER: use the real one.
+            env["WINELOADER"] = loader(root).absolutePath
             env["WINESERVER"] = File(root, "bin/wineserver").absolutePath
             env["WINEDLLPATH"] = File(root, "lib/wine").absolutePath
             env["WINEDEBUGLOG"] = File(home, "wine.log").absolutePath
-            env["WINEDEBUG"] = if (spec.diagnostics) "+timestamp,+pid,+seh,+loaddll,warn+all" else "+timestamp,+pid,+seh"
+            // +seh traces every exception a game raises (many do so constantly): diagnostics only.
+            env["WINEDEBUG"] = if (spec.diagnostics) "+timestamp,+pid,+seh,+loaddll,warn+all"
+                else if (spec.eacDiagnostics) "+timestamp,+pid,+loaddll,warn+module"
+                else "+timestamp,+pid"
             env["LD_LIBRARY_PATH"] = File(root, "lib").absolutePath + ":" + File(root, "lib/wine/aarch64-unix").absolutePath + ":" + context.applicationInfo.nativeLibraryDir
             env["PATH"] = File(root, "bin").absolutePath + ":/system/bin"
             env["LC_ALL"] = "C.UTF-8"; env["LANG"] = "C.UTF-8"
             env["WINEESYNC"] = "0"; env["WINEFSYNC"] = "0"; env["WINENTSYNC"] = "0"
             // Wine looks for its Mono and Gecko installers in $XDG_CACHE_HOME/wine (WineMono).
             env["XDG_CACHE_HOME"] = File(context.filesDir, "wine-cache").absolutePath
+            // The bundled fontconfig was built for Termux and looks for its config there; this one
+            // points at Android's own fonts (package-runtime.py writes it).
+            File(root, "etc/fonts/fonts.conf").takeIf { it.isFile }?.let { env["FONTCONFIG_FILE"] = it.absolutePath }
             val overrides = ArrayList<String>()
             when (spec.graphics) {
                 "dxvk", "vkd3d" -> {
@@ -208,13 +279,20 @@ class WineLaunch private constructor(
             if (spec.dllOverrides.isNotBlank()) overrides += spec.dllOverrides.trim()
             env["WINEDLLOVERRIDES"] = overrides.joinToString(";")
             env["DXVK_LOG_PATH"] = home.absolutePath
-            env["DXVK_STATE_CACHE_PATH"] = home.absolutePath
             env["VKD3D_SHADER_CACHE_PATH"] = home.absolutePath
             env["VKD3D_LOG_FILE"] = File(home, "vkd3d.log").absolutePath
             if (spec.performance) env["DXVK_HUD"] = "fps,frametimes,gpuload"
+            // Frame cap and CPU translation mode (core.Performance); the game's own environment wins.
+            val cap = org.pocketarcade.madeira.core.Performance.frameCap(spec.frameCap,
+                Thermals.batteryGameMode(context), Thermals.powerSaveMode(context))
+            env.putAll(org.pocketarcade.madeira.core.Performance.environment(cap, spec.cpuMode))
             for ((k, v) in spec.environment) env[k] = v
             return env
         }
+
+        /** Wine's own loader, beside ntdll.so. */
+        @JvmStatic
+        fun loader(root: File) = File(root, "lib/wine/aarch64-unix/wine")
 
         const val XINPUT_NAMES = "xinput1_1.dll,xinput1_2.dll,xinput1_3.dll,xinput1_4.dll,xinput9_1_0.dll"
     }
@@ -236,11 +314,25 @@ object SessionState {
         try { file(context).writeText(JSONObject().apply { put("steamAppID", spec.steamAppID); put("title", spec.title); put("state", "running"); put("pid", android.os.Process.myPid()); put("at", System.currentTimeMillis()) }.toString()) } catch (_: Exception) {}
     }
 
-    class Info(val steamAppID: Int, val title: String, val pid: Int, val at: Long)
+    /** Written by the :wine process just before it ends itself (stop, or a failed start). */
+    @JvmStatic
+    fun markEnded(context: Context) {
+        try {
+            val f = file(context)
+            if (!f.isFile) return
+            val o = JSONObject(f.readText())
+            o.put("state", "ended"); o.put("at", System.currentTimeMillis())
+            f.writeText(o.toString())
+        } catch (_: Exception) {}
+    }
+
+    class Info(val steamAppID: Int, val title: String, val pid: Int, val at: Long, val ended: Boolean)
 
     fun current(context: Context): Info? = try {
         val f = file(context)
-        if (!f.isFile) null else JSONObject(f.readText()).let { Info(it.optInt("steamAppID"), it.optString("title"), it.optInt("pid"), it.optLong("at")) }
+        if (!f.isFile) null else JSONObject(f.readText()).let {
+            Info(it.optInt("steamAppID"), it.optString("title"), it.optInt("pid"), it.optLong("at"), it.optString("state") == "ended")
+        }
     } catch (_: Exception) { null }
 
     fun clear(context: Context) { file(context).delete() }
@@ -250,5 +342,11 @@ object SessionState {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
         val name = context.packageName + ":wine"
         return am.runningAppProcesses?.any { it.processName == name } == true
+    }
+
+    /** Whether a game session is still going: recorded, not marked ended, and its process alive. */
+    fun sessionRunning(context: Context): Boolean {
+        val info = current(context) ?: return wineProcessRunning(context)
+        return !info.ended && wineProcessRunning(context)
     }
 }
