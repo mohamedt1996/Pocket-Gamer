@@ -1,4 +1,4 @@
-# Pocket Arcade for Android, built on Madeira
+# Pocket Arcade for Android
 
 The app is now a port of Madeira's iOS interface and Steam client to Android
 (Kotlin, Jetpack Compose), licensed GPL-3.0-or-later like Madeira
@@ -7,7 +7,7 @@ copyright lines).
 
 What the app does:
 
-- **Setup** on first start: Steam sign-in, Madeira Dock's components, Wine Mono.
+- **Setup** on first start: Steam sign-in, Pocket Dock's Linux Proton packages, optional Wine Mono for legacy builds.
 - **Steam sign-in** with password + Steam Guard (email or authenticator code, or
   approval in the Steam Mobile app), or a QR code. Only the refresh token is
   kept, encrypted with an Android Keystore key.
@@ -21,11 +21,13 @@ What the app does:
   downloads with pause/resume, updates, prerequisites and game launch. Epic
   tokens use a separate Android Keystore vault. See [Epic integration and
   component provenance](EPIC-UPSTREAM.md) for scope and test limits.
-- **Steam Cloud** saves: sync before and after a session, conflicts resolved by
-  your choice, replaced copies kept as backups.
-- **Madeira Dock**: Steam games start through Valve's own client (downloaded
-  from Valve, SHA-256-pinned) with `dockhost.exe` from willfaust/madeira-dock,
-  including the games' one-time installs. "Start with › The game" skips Steam.
+- **Steam Cloud** saves: sync and conflict resolution, with replaced copies kept
+  as backups. Pocket Dock does not currently trigger automatic session sync.
+- **Pocket Dock**: an Android-side Steam library launcher. It uses the account's
+  Steam session to download games, then starts a selected Windows program with
+  the bundled Linux Proton stack and Box64. An external X11 display is required.
+  Valve's Windows client, Steam DRM, Steamworks and online anti-cheat acceptance
+  are not provided by Pocket Dock.
 - **In game**: touch controls (Xbox layout and a keyboard layout, editable), an
   XInput bridge so physical controllers and touch controls appear as Xbox pads,
   keyboard/mouse mode, an on-screen keyboard, FPS overlay, and a session menu.
@@ -36,10 +38,9 @@ What the app does:
 The original test interface (`MainActivity`) is still in the APK under
 Settings › Troubleshooting › Developer tools.
 
-CI: `android_app` runs the Kotlin unit tests (`gradle testDebugUnitTest`) and
-builds an APK without the Windows runtime in a few minutes. The `addons`
-component builds `dockhost.exe` and the XInput bridge DLLs; `package-runtime.py`
-requires them in the runtime.
+The `android-linux-proton.yml` workflow packages Proton and the x86-64 rootfs
+in one APK and runs the Android unit tests. Box64 is installed on the tablet.
+The older Android Wine workflow remains in the repository for development.
 
 Steam is a trademark of Valve Corporation. This project is not affiliated with
 Valve; Valve's client components are downloaded from Valve on request.

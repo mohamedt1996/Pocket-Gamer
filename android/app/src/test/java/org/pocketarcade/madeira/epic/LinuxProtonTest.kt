@@ -40,6 +40,10 @@ class LinuxProtonTest {
             assertTrue(plan.environment["STEAM_COMPAT_DATA_PATH"]!!.contains("sessions/proton/compatdata"))
             assertFalse(plan.environment.containsKey("WINEPREFIX"))
             assertEquals(plan, LinuxProton.Plan.fromJson(plan.toJson()))
+            val steamState = File(base, "steam-state")
+            val steamPlan = LinuxProton.prepare(root, box64, gameDir, exe, "Steam game", emptyList(), ":0", false, steamState)
+            assertTrue(steamPlan.environment["STEAM_COMPAT_DATA_PATH"]!!.startsWith(steamState.absolutePath))
+            assertTrue(steamPlan.logFile.startsWith(steamState.absolutePath))
         } finally { base.deleteRecursively() }
     }
 }

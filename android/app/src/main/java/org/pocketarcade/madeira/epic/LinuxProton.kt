@@ -57,11 +57,11 @@ object LinuxProton {
             ?: error("Missing x86-64 Linux library $name in rootfs")
     }
     fun prepare(context: Context, gameDir: File, executable: File, title: String, arguments: List<String>,
-                display: String, needsEac: Boolean): Plan = prepare(root(context), RuntimeComponents.verifiedBox64(context),
-        gameDir, executable, title, arguments, display, needsEac)
+                display: String, needsEac: Boolean, stateDir: File = gameDir): Plan =
+        prepare(root(context), RuntimeComponents.verifiedBox64(context), gameDir, executable, title, arguments, display, needsEac, stateDir)
 
     fun prepare(root: File, box64: File, gameDir: File, executable: File, title: String, arguments: List<String>,
-                display: String, needsEac: Boolean): Plan {
+                display: String, needsEac: Boolean, stateDir: File = gameDir): Plan {
         require(box64.isFile && box64.canExecute()) { "Install Box64 before using Linux Proton" }
         val python = requireElf64X86(root, "rootfs/usr/bin/python3")
         requireElf64X86(root, "proton/files/bin/wine")
@@ -69,8 +69,8 @@ object LinuxProton {
         val script = requireInside(root, File(root, "proton/proton"))
         require(script.isFile) { "Stage a complete Proton distribution in linux-proton/proton" }
         val steam = File(root, "steam").apply { mkdirs() }
-        val compat = File(gameDir, "sessions/proton/compatdata").apply { mkdirs() }
-        val temp = File(gameDir, "sessions/proton/tmp").apply { mkdirs() }
+        val compat = File(stateDir, "sessions/proton/compatdata").apply { mkdirs() }
+        val temp = File(stateDir, "sessions/proton/tmp").apply { mkdirs() }
         val work = executable.parentFile!!.canonicalFile
         require(work.path.startsWith(gameDir.canonicalPath + File.separator) && executable.isFile) { "Game executable is outside its installation" }
         val x11 = display.trim()
@@ -86,7 +86,7 @@ object LinuxProton {
             "rootfs/usr/lib64", "proton/files/lib64", "proton/files/lib", "proton/files/lib64/wine/x86_64-unix")
             .map { File(root, it).absolutePath }.joinToString(":")
         val env = mapOf(
-            "HOME" to File(gameDir, "sessions/proton").absolutePath,
+            "HOME" to File(stateDir, "sessions/proton").absolutePath,
             "TMPDIR" to temp.absolutePath,
             "DISPLAY" to x11,
             "PATH" to listOf(File(root, "rootfs/usr/bin"), File(root, "rootfs/bin"), File(root, "proton/files/bin"))
@@ -103,6 +103,6 @@ object LinuxProton {
         ).toMutableMap()
         if (needsEac) env["PROTON_EAC_RUNTIME"] = eac.absolutePath
         return Plan(listOf(box64.absolutePath, python.absolutePath, script.absolutePath, "run", executable.absolutePath) + arguments,
-            env, work.absolutePath, File(gameDir, "sessions/proton/proton.log").absolutePath, title)
+            env, work.absolutePath, File(stateDir, "sessions/proton/proton.log").absolutePath, title)
     }
 }

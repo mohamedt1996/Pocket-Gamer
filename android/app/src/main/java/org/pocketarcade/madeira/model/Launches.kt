@@ -11,6 +11,7 @@ import org.pocketarcade.madeira.AppGraph
 import org.pocketarcade.madeira.GameStore
 import org.pocketarcade.madeira.core.DirectStart
 import org.pocketarcade.madeira.core.DockException
+import org.pocketarcade.madeira.epic.LinuxProton
 import org.pocketarcade.madeira.session.LaunchSpec
 import java.io.File
 
@@ -22,19 +23,19 @@ object Launches {
         if (graph.library.downloads.value.containsKey(appID)) return "This game is being downloaded. Play is available when it is done."
         val config = graph.steamConfigs.get(appID)
         if (config.startWith == "game") {
+            if (!graph.runtime.bundled()) return "This APK has no Android Wine runtime. Select Pocket Dock under Start with."
             val root = File(graph.prefix.drive, "${g.library}/common/${g.installDir}")
             if (DirectStart.program(config.program, graph.library.game(appID)?.launches, root).isNullOrEmpty()) return "Choose the program to start below, under Start with."
             return null
         }
-        if (!graph.prefix.clientInstalled) return "Madeira Dock needs Valve's client components. Download them in Settings › Steam › Madeira Dock."
         if (!graph.account.signedIn) return "Sign in to Steam to play."
-        if (!graph.dock.hostAvailable(graph.runtime)) return "This build has no Madeira Dock host."
+        if (!LinuxProton.staged(graph.context, false)) return "Install the included Linux packages and Box64 in Settings › Pocket Dock."
         return null
     }
 
     private fun quote(path: String) = "\"" + path + "\""
 
-    /** The session for a Steam game, through Madeira Dock or its own program. */
+    /** Legacy Android Wine session for a Steam game; Pocket Dock uses Linux Proton. */
     suspend fun steam(graph: AppGraph, appID: Int): LaunchSpec {
         val g = graph.library.installedGame(appID) ?: throw DockException("The game is not installed.")
         val config = graph.steamConfigs.get(appID)

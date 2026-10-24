@@ -200,7 +200,6 @@ fun OnboardingScreen(graph: AppGraph, nav: Navigator) {
     val colors = Madeira.colors
     var page by rememberSaveable { mutableIntStateOf(0) }
     val accountName by graph.account.accountName.collectAsState()
-    val components by graph.dock.components.collectAsState()
     val mono by graph.mono.state.collectAsState()
     fun finish() { graph.settings.onboardingRevision = OnboardingRevision; nav.popTo { it !is Screen.Onboarding } }
     val last = 4
@@ -221,7 +220,7 @@ fun OnboardingScreen(graph: AppGraph, nav: Navigator) {
                         }
                         Spacer(Modifier.height(24.dp))
                         Text("Pocket Arcade", fontSize = 40.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        Text("Built on Madeira", style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.7f))
+                        Text("Steam and Epic games on Android", style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.7f))
                         Spacer(Modifier.height(8.dp))
                         Text("Your Windows games, on Android. Sign in to Steam, download your library, and play with touch controls or a controller.",
                             style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center)
@@ -232,14 +231,13 @@ fun OnboardingScreen(graph: AppGraph, nav: Navigator) {
                         else { Paragraph("Sign in to see your library and download games. You can also do this later from the library."); SignInForm(graph) }
                     }
                     2 -> Column {
-                        Title("Madeira Dock")
-                        Paragraph("Steam games start through Valve's own Steam client, so Steam's licence checks, DRM and overlay-free sign-in work as they do on a PC. " +
-                            "Madeira Dock downloads Valve's client components (about ${formatBytes(SteamRuntimeFiles.totalBytes)}) straight from Valve and checks each one.")
-                        ComponentsCard(graph, components)
+                        Title("Pocket Dock")
+                        Paragraph("Pocket Dock downloads your Steam games with your Steam account and starts their Windows programs using Linux Proton. An X11 display is required; Steam client DRM and Steamworks features are not guaranteed.")
+                        PocketDockSetup(graph)
                     }
                     3 -> Column {
                         Title(".NET Framework")
-                        Paragraph("Games built on .NET or XNA need Wine Mono, Wine's .NET Framework (about 80 MB from WineHQ). Most games do not; you can add it later in Settings.")
+                        Paragraph("Wine Mono is for the optional legacy Android Wine path. Pocket Dock uses Linux Proton.")
                         MonoCard(graph, mono)
                     }
                     else -> Column(Modifier.fillMaxWidth().padding(Gutter), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -318,7 +316,6 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
     val context = LocalContext.current
     val s = graph.settings
     val accountName by graph.account.accountName.collectAsState()
-    val components by graph.dock.components.collectAsState()
     val mono by graph.mono.state.collectAsState()
     val cloud by s.steamCloud.collectAsState()
     val cloudAuto by s.cloudAutomatic.collectAsState()
@@ -338,10 +335,7 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
                 SettingsRow("Sign out", tint = colors.red) { confirmSignOut = true }
             } else SettingsRow("Sign in to Steam", icon = Icons.AutoMirrored.Filled.Login, tint = colors.accent) { nav.push(Screen.SignIn) }
             RowDivider()
-            SettingsRow("Madeira Dock", when (components) {
-                DockModel.Components.Ready -> "Ready"; DockModel.Components.Missing -> "Not downloaded"
-                is DockModel.Components.Downloading -> "Downloading"; is DockModel.Components.Failed -> "Failed"
-            }, chevron = true) { nav.push(Screen.Dock) }
+            SettingsRow("Pocket Dock", if (org.pocketarcade.madeira.epic.LinuxProton.staged(context, false)) "Ready" else "Set up Proton", chevron = true) { nav.push(Screen.Dock) }
         }
         SettingsSection("Steam Cloud", footer = "Saves sync before a game starts and after it ends. Replaced copies are kept in the app's Steam Cloud Backups folder.") {
             ToggleRow("Steam Cloud", cloud) { s.setSteamCloud(it) }
@@ -417,32 +411,44 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
         dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text("Cancel") } })
 }
 
-// MARK: Madeira Dock
+// MARK: Pocket Dock
+
+@Composable
+private fun PocketDockSetup(graph: AppGraph) {
+    val colors = Madeira.colors
+    val context = LocalContext.current
+    val state by graph.epic.state.collectAsState()
+    val packages = remember(state.componentRevision) { org.pocketarcade.madeira.epic.LinuxProtonInstaller.bundled(context) }
+    val box64 = org.pocketarcade.madeira.epic.RuntimeComponents.box64Available(context)
+    val ready = org.pocketarcade.madeira.epic.LinuxProton.staged(context, false)
+    var display by rememberSaveable { mutableStateOf(org.pocketarcade.madeira.model.PocketDock.display(context)) }
+    SettingsSection("Linux Proton") {
+        SettingsRow("Pocket Dock runtime", if (ready) "Ready" else "Needs setup")
+        if (packages.isNotEmpty()) SettingsRow("Install included Linux packages", "Proton and x86-64 Linux rootfs",
+            icon = Icons.Filled.FileDownload, tint = colors.accent) { graph.epic.installBundledLinux() }
+        else SettingsRow("Included Linux packages", "Missing from this APK", tint = colors.red)
+        RowDivider()
+        SettingsRow(if (box64) "Repair Box64" else "Install Box64", icon = Icons.Filled.FileDownload,
+            tint = colors.accent) { graph.epic.installBox64() }
+        state.bundleProgress?.let { Paragraph(it) }
+        state.error?.let { Paragraph(it) }
+    }
+    SettingsSection("Display") {
+        OutlinedTextField(display, { display = it }, label = { Text("X11 DISPLAY") }, modifier = Modifier.fillMaxWidth())
+        SettingsRow("Save display", display, tint = colors.accent) {
+            runCatching { org.pocketarcade.madeira.model.PocketDock.setDisplay(context, display) }
+                .onFailure { graph.epic.reportError(it.message ?: "Invalid X11 display") }
+        }
+    }
+}
 
 @Composable
 fun DockScreen(graph: AppGraph, nav: Navigator) {
-    val colors = Madeira.colors
-    val components by graph.dock.components.collectAsState()
-    var confirmRemove by remember { mutableStateOf(false) }
-    val hostBundled = remember { graph.dock.hostAvailable(graph.runtime) }
-    PageFrame("Madeira Dock", { nav.pop() }) {
-        Paragraph("Madeira Dock starts Steam games through Valve's Steam client, signed in with your account, without showing Steam's window. " +
-            "Games get Steam's licence check, DRM, achievements and Steamworks as they would on a PC.")
-        ComponentsCard(graph, components)
-        SettingsSection(footer = "Valve's client components come from client-update.akamai.steamstatic.com and are checked against the SHA-256 Madeira pins. They are Valve's software, under Valve's terms.") {
-            SettingsRow("Download size", formatBytes(SteamRuntimeFiles.totalBytes))
-            RowDivider()
-            SettingsRow("Dock host", if (hostBundled) "Included" else "Missing from this build", tint = if (hostBundled) null else colors.red)
-            if (components == DockModel.Components.Ready) {
-                RowDivider()
-                SettingsRow("Remove components", tint = colors.red) { confirmRemove = true }
-            }
-        }
+    PageFrame("Pocket Dock", { nav.pop() }) {
+        Paragraph("Sign in to Steam, download a Windows game from your library, then start it through the included Linux Proton stack. Keep a separate X11 display app running on this tablet.")
+        PocketDockSetup(graph)
+        Paragraph("Pocket Dock does not run Valve's Windows client. Games needing Steam DRM, Steamworks, or anti-cheat support may fail; use the game's own launch program when one is available.")
     }
-    if (confirmRemove) AlertDialog(onDismissRequest = { confirmRemove = false }, title = { Text("Remove Valve's client components?") },
-        text = { Text("Steam games will not start through Madeira Dock until you download them again. Installed games are kept.") },
-        confirmButton = { TextButton(onClick = { confirmRemove = false; graph.scope.launch { graph.dock.removeComponents(); graph.dock.refresh() } }) { Text("Remove", color = colors.red) } },
-        dismissButton = { TextButton(onClick = { confirmRemove = false }) { Text("Cancel") } })
 }
 
 // MARK: Logs

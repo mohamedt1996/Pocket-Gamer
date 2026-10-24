@@ -244,7 +244,7 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
         if (blocker != null) {
             when {
                 !graph.account.signedIn && config.startWith == "dock" -> nav.push(Screen.SignIn)
-                !graph.prefix.clientInstalled && config.startWith == "dock" -> nav.push(Screen.Dock)
+                config.startWith == "dock" && !org.pocketarcade.madeira.epic.LinuxProton.staged(context, false) -> nav.push(Screen.Dock)
                 else -> notice = blocker
             }
             return
@@ -252,7 +252,13 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
         if (!skipCloud) graph.library.cloudHold(appID)?.let { hold = it; return }
         starting = true
         scope.launch {
-            try { Launcher.start(context, Launches.steam(graph, appID)) }
+            try {
+                if (config.startWith == "dock") {
+                    val plan = org.pocketarcade.madeira.model.PocketDock.prepare(graph, appID)
+                    context.startForegroundService(Intent(context, org.pocketarcade.madeira.epic.LinuxProtonService::class.java)
+                        .putExtra(org.pocketarcade.madeira.epic.LinuxProtonService.PLAN, plan.toJson()))
+                } else Launcher.start(context, Launches.steam(graph, appID))
+            }
             catch (e: Exception) { notice = e.message ?: "The game could not start." }
             starting = false
         }
@@ -289,10 +295,10 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
         }
         if (installed != null && cloudOn && graph.account.signedIn) CloudSection(graph, appID, cloudStates[appID])
         if (installed != null) {
-            SettingsSection("Start with", footer = if (config.startWith == "dock") "Madeira Dock starts the game through Valve's own Steam client: Steam's sign-in, licence check and DRM, without Steam's window."
-                else "The game's own program, without Steam. Suits games that do not need Steam.") {
-                Choice(listOf("dock" to "Madeira Dock", "game" to "The game"), config.startWith) { v -> graph.steamConfigs.update(appID) { it.copy(startWith = v) } }
-                if (config.startWith == "game") {
+            SettingsSection("Start with", footer = if (config.startWith == "dock") "Pocket Dock runs the downloaded Windows game with Linux Proton. An X11 display is required. Games that require the Steam client or DRM may refuse to start."
+                else "Legacy Android Wine requires a separate APK with its Windows runtime.") {
+                Choice(listOf("dock" to "Pocket Dock", "game" to "Legacy Wine"), config.startWith) { v -> graph.steamConfigs.update(appID) { it.copy(startWith = v) } }
+                if (config.startWith == "game" || config.startWith == "dock") {
                     val root = File(graph.prefix.drive, "${installed.library}/common/${installed.installDir}")
                     val current = DirectStart.program(config.program, game?.launches, root)
                     RowDivider()
@@ -306,7 +312,7 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
                 SettingsRow("Uninstall", tint = colors.red, icon = Icons.Filled.Delete) { confirmUninstall = true }
             }
             val (found, pending) = remember(installed, version) { graph.dock.plannedInstalls(installed) }
-            if (found.isNotEmpty()) SettingsSection("One-time installs", footer = "Valve's client runs these before a game's first start; Madeira Dock runs them in the session before the game. Each runs once.") {
+            if (found.isNotEmpty()) SettingsSection("One-time installs", footer = "These Steam install scripts are shown for reference. Pocket Dock does not run them automatically.") {
                 for ((i, p) in found.withIndex()) {
                     if (i > 0) RowDivider()
                     SettingsRow(org.pocketarcade.madeira.core.InstallScripts.label(p.run), if (p in pending) "Next start" else "Done")
