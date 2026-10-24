@@ -106,19 +106,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build 16 KB Android Box64 with Box32 Linux support
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get install -y -qq ninja-build zstd
-          source_dir="$RUNNER_TEMP/box64-source"
-          git init -q "$source_dir"
-          git -C "$source_dir" remote add origin https://github.com/ptitSeb/box64.git
-          git -C "$source_dir" fetch -q --depth 1 origin 420eda69ff51ab5d5a7cbc3dee2e70433be3411d
-          git -C "$source_dir" checkout -q --detach FETCH_HEAD
-          runtime/android/build-box64-16k.sh "$source_dir" \
-            "$ANDROID_HOME/ndk/27.3.13750724" \
-            android/app/src/main/assets/runner/box64-box32-android-arm64-16k.zst --box32
       - name: Fetch GE-Proton and build the x86-64 rootfs
         env:
           EAC_RUNTIME_URL: ${{ secrets.PROTON_EAC_RUNTIME_URL }}
@@ -196,10 +183,12 @@ jobs:
             release-assets/PocketArcade-Android-Wine-FEX-arm64ec.sha256
           cp android/app/src/main/assets/runner/box64-android-arm64-16k.zst \
             release-assets/box64-android-arm64-16k.zst
-          cp android/app/src/main/assets/runner/box64-box32-android-arm64-16k.zst \
-            release-assets/box64-box32-android-arm64-16k.zst
-          cp android/app/src/main/assets/runner/box64-box32-android-arm64-16k.json \
-            release-assets/box64-box32-android-arm64-16k.json
+          if [[ -f android/app/src/main/assets/runner/box64-box32-android-arm64-16k.zst ]]; then
+            cp android/app/src/main/assets/runner/box64-box32-android-arm64-16k.zst \
+              release-assets/box64-box32-android-arm64-16k.zst
+            cp android/app/src/main/assets/runner/box64-box32-android-arm64-16k.json \
+              release-assets/box64-box32-android-arm64-16k.json
+          fi
           cp android/app/src/main/assets/runner/BOX64-LICENSE.txt release-assets/BOX64-LICENSE.txt
           cp android/LINUX-PROTON.md release-assets/LINUX-PROTON.md
           cp android/POCKET-DOCK.md release-assets/POCKET-DOCK.md
@@ -293,7 +282,7 @@ jobs:
           cat > release-notes.md <<EOF
           Pocket Arcade combined Android Wine/FEX and Linux Proton build from commit ${GITHUB_SHA}.
 
-          For tablets whose package manager rejects very large APKs, install \`PocketArcade-Android-Wine-FEX-arm64-lite-debug.apk\`. It includes Android ARM64EC Proton-Wine/FEX and Box64/Box32. Import the separate GE-Proton and multiarch Debian .tgz assets under **Settings → Pocket Dock**. The larger \`PocketArcade-Android-Linux-Proton-arm64-debug.apk\` embeds them. Pocket Dock uses CPU-rendered Vulkan and a separate X11 display; Adreno-accelerated Linux Vulkan remains unverified. Select **Android Wine/FEX** for the native Android GPU path.
+          For tablets whose package manager rejects very large APKs, install \`PocketArcade-Android-Wine-FEX-arm64-lite-debug.apk\`. It includes Android ARM64EC Proton-Wine/FEX and Box64. Import the separate GE-Proton and multiarch Debian .tgz assets under **Settings → Pocket Dock**. The larger \`PocketArcade-Android-Linux-Proton-arm64-debug.apk\` embeds them. Pocket Dock uses CPU-rendered Vulkan and a separate X11 display; its 32-bit Linux translator and Adreno-accelerated Linux Vulkan remain unavailable. Select **Android Wine/FEX** for the native Android GPU path and Windows x86/x64 games.
 
           ${eac_note} EAC support also depends on the game's publisher. Proton execution and Rocket League matchmaking have not been verified on the Mi Pad 7.
 

@@ -373,7 +373,7 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
         }
         val gpu = org.pocketarcade.madeira.platform.GpuCaps.current
         if (gpu != null) SettingsSection("GPU", footer =
-            "This checks the tablet's current Vulkan driver against the bundled graphics layers. Pocket Dock uses WineD3D for Direct3D 8–11 when DXVK is unavailable; that path also needs a working X11 OpenGL display. Direct3D 12 may still fail.") {
+            "This checks the tablet's current Vulkan driver against the Android Wine graphics layers. Pocket Dock has a separate CPU-rendered Linux Vulkan driver. Direct3D 12 may still fail.") {
             SettingsRow(gpu.name.ifBlank { "Graphics" }, gpu.summary().substringAfter(" · ", ""))
             RowDivider()
             SettingsRow("DXVK (Direct3D 8–11)", if (gpu.dxvk) "Driver features present" else "Driver features missing",
@@ -424,7 +424,8 @@ private fun PocketDockSetup(graph: AppGraph) {
         org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.ROOTFS)
     val protonReady = org.pocketarcade.madeira.epic.LinuxProtonInstaller.installed(context,
         org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.PROTON)
-    val box64 = org.pocketarcade.madeira.epic.RuntimeComponents.box32Available(context)
+    val box64 = org.pocketarcade.madeira.epic.RuntimeComponents.box64Available(context)
+    val box32 = org.pocketarcade.madeira.epic.RuntimeComponents.box32Available(context)
     val ready = org.pocketarcade.madeira.epic.LinuxProton.staged(context, false)
     var display by rememberSaveable { mutableStateOf(org.pocketarcade.madeira.model.PocketDock.display(context)) }
     var desktopStatus by remember { mutableStateOf<String?>(null) }
@@ -439,7 +440,8 @@ private fun PocketDockSetup(graph: AppGraph) {
         SettingsRow("Pocket Dock Linux packages", if (ready) "Staged; launch unverified" else "Needs setup")
         SettingsRow("x86-64 Linux rootfs", if (rootfsReady) "Installed" else "Missing")
         SettingsRow("Proton Wine runtime", if (protonReady) "Installed" else "Missing")
-        SettingsRow("Box64 + Box32 Linux translator", if (box64) "Installed" else "Missing")
+        SettingsRow("Box64 x86-64 Linux translator", if (box64) "Installed" else "Missing")
+        SettingsRow("Box32 i386 Linux translator", if (box32) "Installed" else "Unavailable in this build")
         SettingsRow("Android Wine/FEX runtime", if (org.pocketarcade.madeira.PortRuntime(context).bundled())
             "Included in APK" else "Not included in this APK")
         if (packages.isNotEmpty()) SettingsRow(
@@ -461,9 +463,10 @@ private fun PocketDockSetup(graph: AppGraph) {
         }
         RowDivider()
         if (org.pocketarcade.madeira.epic.RuntimeComponents.box32Bundled(context))
-            SettingsRow(if (box64) "Repair Box64 + Box32" else "Install Box64 + Box32", icon = Icons.Filled.FileDownload,
+            SettingsRow(if (box32) "Repair Box64 + Box32" else "Install Box64 + Box32", icon = Icons.Filled.FileDownload,
                 tint = colors.accent) { if (!state.busy) graph.epic.installBox64() }
-        else SettingsRow("Box32 Linux translator", "Missing from this APK", tint = colors.red)
+        else SettingsRow(if (box64) "Repair Box64" else "Install Box64", icon = Icons.Filled.FileDownload,
+            tint = colors.accent) { if (!state.busy) graph.epic.installBox64() }
         state.bundleProgress?.let { Paragraph(it) }
         state.box64Probe?.let { Paragraph(it) }
         state.error?.let { Paragraph(it) }

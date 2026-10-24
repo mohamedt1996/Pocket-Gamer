@@ -78,7 +78,8 @@ def main(apk_path, require_android_runtime=False, native_only=False):
         if native_only:
             assert "assets/linux-proton/manifest.json" not in apk.namelist()
             verify_android_runtime(apk)
-            verify_box32(apk)
+            if "assets/runner/box64-box32-android-arm64-16k.json" in apk.namelist():
+                verify_box32(apk)
             print(f"verified native-only APK: {apk_path}")
             return
         manifest = json.loads(apk.read("assets/linux-proton/manifest.json"))
@@ -101,7 +102,8 @@ def main(apk_path, require_android_runtime=False, native_only=False):
             print(f"verified {kind}: {size} bytes, SHA-256 {digest}")
         if require_android_runtime:
             verify_android_runtime(apk)
-            verify_box32(apk)
+            if "assets/runner/box64-box32-android-arm64-16k.json" in apk.namelist():
+                verify_box32(apk)
     print(f"verified APK: {apk_path}")
 
 

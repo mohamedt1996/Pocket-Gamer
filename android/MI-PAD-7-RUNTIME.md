@@ -33,8 +33,8 @@ result alongside the Linux packages. Its APK verifier requires the native
 runtime and the Windows modules for both bitnesses. CI packaging is still not
 a Mi Pad 7 rendering test.
 
-The subsequent Linux experiment adds an i386 Debian userland and a 16 KB-aligned
-Android Box64 build with upstream Box32 enabled. It also bundles Mesa lavapipe
+The subsequent Linux experiment adds an i386 Debian userland and an existing
+16 KB-aligned Android Box64 build. It also bundles Mesa lavapipe
 for both guest bitnesses. This is a **CPU-rendered Vulkan fallback** for testing
 the Linux execution path, not an Adreno 732 graphics driver. It needs an X11
 server on the tablet and has not been device-validated. Do not infer usable
@@ -43,7 +43,10 @@ The exported multiarch rootfs was validated locally; isolated x86-64 and i386
 processes each created a Vulkan instance and enumerated one lavapipe device.
 The i386 process ran through `qemu-i386-static` because the cloud host kernel
 does not execute 32-bit x86 ELF directly. This validates the rootfs ICDs, not
-Box32 on the tablet or Proton's X11 presentation.
+Box32 on the tablet or Proton's X11 presentation. The pinned upstream Box32
+build fails against Android's Bionic headers and glibc-only APIs, so this APK
+does not include an Android Box32 executable. The i386 guest rootfs alone does
+not provide a runnable 32-bit Linux process path.
 
 ## Device-specific graphics route
 

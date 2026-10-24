@@ -39,7 +39,7 @@ object LinuxProton {
     }.getOrDefault("Proton session status could not be read")
     fun staged(context: Context, needsEac: Boolean): Boolean {
         val root = root(context)
-        return RuntimeComponents.box32Available(context) && File(root, "rootfs/usr/bin/python3").isFile &&
+        return RuntimeComponents.box64Available(context) && File(root, "rootfs/usr/bin/python3").isFile &&
             File(root, "rootfs/usr/lib/i386-linux-gnu/libc.so.6").isFile &&
             File(root, "rootfs/lib/ld-linux.so.2").exists() &&
             File(root, "rootfs/usr/share/vulkan/icd.d/lvp_icd.x86_64.json").isFile &&

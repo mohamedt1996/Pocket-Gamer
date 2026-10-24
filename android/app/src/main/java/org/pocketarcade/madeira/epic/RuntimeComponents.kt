@@ -40,6 +40,7 @@ object RuntimeComponents {
     fun box32Available(context: Context): Boolean = box32File(context).isFile
     fun box32Bundled(context: Context): Boolean = runCatching { context.assets.open(BOX32_MANIFEST).close(); true }.getOrDefault(false)
     fun verifiedLinuxBox(context: Context): File {
+        if (!box32Available(context)) return verifiedBox64(context)
         val binary = box32File(context)
         require(binary.isFile && binary.canExecute()) { "Install Box64 with Box32 for Linux Proton" }
         val manifest = context.assets.open(BOX32_MANIFEST).bufferedReader().use { JSONObject(it.readText()) }

@@ -1,6 +1,6 @@
 # Optional Linux Proton session on Android
 
-This is a separate, opt-in Box64/Box32 session for Epic games. It runs a
+This is a separate, opt-in Box64 session for Epic games. It runs a
 x86-64 Linux Proton distribution through an x86-64 Linux Python interpreter;
 the existing Android Wine/FEX session and its prefixes remain separate. The
 app launches the game's original Epic executable and arguments with `proton
@@ -9,7 +9,7 @@ path when the game requires it. It does not alter EAC files or bypass checks.
 
 ## Prepare existing components
 
-Install Box64/Box32 from the Epic screen. To create an APK with verified GE-Proton
+Install Box64 from the Epic screen. To create an APK with verified GE-Proton
 and a multiarch Debian rootfs, run from the repository root:
 
 ```sh
@@ -20,8 +20,8 @@ gradle --no-daemon --max-workers=2 -Dorg.gradle.jvmargs='-Xmx12g -Dfile.encoding
 
 This produces `android/app/build/outputs/apk/debug/app-debug.apk`. The larger
 Gradle heap is needed while packaging these assets. Tap **Install included Linux packages** to extract
-them into app-private storage. The packages add about 703 MB to the APK and
-need several gigabytes free while extracting. The standard small APK can still
+them into app-private storage. The packages add roughly 840 MB to the APK and
+need several gigabytes free while extracting. The smaller APK can still
 use the three **Import .tar.gz** buttons to select existing packages.
 
 GitHub Actions runs the same build in **Android Linux Proton APK** on pushes to
@@ -36,7 +36,7 @@ archive bytes before publishing.
 
 The release also includes a smaller Android Wine/FEX lite APK for devices whose
 package manager rejects the large all-in-one APK. The lite APK includes the
-Android-native runtime and Box64/Box32; import the separate Proton and Debian
+Android-native runtime and Box64; import the separate Proton and Debian
 `.tgz` assets through **Settings → Pocket Dock**. The full APK is self-contained
 for the included Linux packages. To add the official
 Proton EAC runtime to a personal APK, supply its archive to the build script
@@ -100,7 +100,7 @@ Run an X11 server on the tablet that the Pocket Arcade app process can reach,
 and enter its `DISPLAY` in the Epic screen. An external X11 Android app may
 provide this display; its socket or TCP endpoint must be accessible across app
 processes. Then select **Play with Linux Proton** for an installed Epic game.
-The app runs Box64/Box32 → x86-64 Python → the Proton script → Proton Wine, in a
+The app runs Box64 → x86-64 Python → the Proton script → Proton Wine, in a
 foreground service with a Stop action. Each game gets its own
 `Epic/<game>/sessions/proton/compatdata` and `proton.log`; neither is shared
 with the Android Wine prefix. The log is app-private and can contain one-use
@@ -114,6 +114,13 @@ Adreno-accelerated Linux route requires a compatible Android X11/Vulkan
 presentation wrapper; Box64's Vulkan call wrapper alone cannot create that
 bridge. GE-Proton upstream supports non-Steam launches through umu and its
 Steam runtime, which this experimental direct launch does not include.
+
+The i386 libraries and Vulkan ICD are packaged and tested, but this APK does
+not include an Android Box32 executable. Upstream Box64's current Box32 option
+does not build against the pinned Android NDK because it uses glibc-only
+interfaces. Games or helpers that need an i386 Linux process cannot launch
+through Pocket Dock yet. The Android Wine/FEX route includes Windows x86 and
+x64 modules and is the recommended route on the Mi Pad 7.
 
 The cloud build validates archive handling, environment construction, and APK
 packaging. On-device execution, X11 access, Vulkan presentation, audio/input,
