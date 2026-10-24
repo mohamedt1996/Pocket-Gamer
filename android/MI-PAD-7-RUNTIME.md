@@ -6,6 +6,24 @@ features for the app's current DXVK and VKD3D-Proton requirements. The tablet's
 RAM, Android build, kernel page size, and Vulkan feature list still need a device
 capture. The 128 GB storage variant does not establish those properties.
 
+## Alpha.7 installation failure
+
+Android package-manager result `-100` is
+[`INSTALL_PARSE_FAILED_NOT_APK`](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/core/java/android/content/pm/PackageManager.java):
+the file delivered to the installer was not recognized as a complete APK.
+The alpha.7 release APK was downloaded and checked as a valid 925 MB ZIP with
+an Android manifest, so the tablet may have received a partial download or an
+Actions artifact `.zip` instead of the `.apk` inside it. The next release has a
+smaller Android Wine/FEX APK. Download the `.apk` release asset directly and
+compare its SHA-256 to `SHA256SUMS.txt` before opening it in Files. Do not
+rename an Actions artifact `.zip` to `.apk`.
+
+Alpha.6 and alpha.7 were signed with different ephemeral CI debug keys.
+Even a complete later APK cannot update an installed earlier alpha in place;
+Android normally reports a signature conflict separately from `-100`. Back up
+app data before removing an earlier alpha if that conflict occurs. A stable
+release signing key is needed for future in-place updates.
+
 ## What the `android-proton-v0.1.0-alpha.6` APK actually carries
 
 The published APK was downloaded and inspected, not inferred from its filename.
