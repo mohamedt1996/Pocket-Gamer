@@ -87,6 +87,9 @@ class EpicLibrary(private val context: Context, private val scope: CoroutineScop
             _state.value = _state.value.copy(box64Probe = if (e.message?.contains("page size") == true)
                 "This Android page size has no compatible Box64 build."
                 else "Box64 archive validation failed. The component was not installed.")
+        } catch (e: CancellationException) { throw e
+        } catch (e: Exception) {
+            _state.value = _state.value.copy(error = e.message ?: "Box64 could not be installed")
         }
     }
     fun probeBox64() = action {
@@ -103,16 +106,20 @@ class EpicLibrary(private val context: Context, private val scope: CoroutineScop
             _state.value = _state.value.copy(error = e.message ?: "Linux runtime archive could not be installed")
         }
     }
-    fun installBundledLinux() = action {
+    fun installBundledLinux() = installBundledLinux(repair = false)
+    fun repairBundledLinux() = installBundledLinux(repair = true)
+    private fun installBundledLinux(repair: Boolean) = action {
         val packages = LinuxProtonInstaller.bundled(context)
-        require(packages.isNotEmpty()) { "This APK has no included Linux Proton packages" }
         try {
-            for (packageFile in packages) {
+            require(packages.isNotEmpty()) { "This APK has no included Linux Proton packages" }
+            val pending = if (repair) packages else packages.filterNot { LinuxProtonInstaller.installed(context, it.component) }
+            if (pending.isEmpty()) _state.value = _state.value.copy(bundleProgress = "Included Linux packages are already installed")
+            for (packageFile in pending) {
                 _state.value = _state.value.copy(bundleProgress = "Installing ${packageFile.component.folder}…")
                 withContext(Dispatchers.IO) { LinuxProtonInstaller.installBundled(context, packageFile) }
                 _state.value = _state.value.copy(componentRevision = _state.value.componentRevision + 1)
             }
-            _state.value = _state.value.copy(bundleProgress = "Included Linux packages installed")
+            if (pending.isNotEmpty()) _state.value = _state.value.copy(bundleProgress = "Included Linux packages installed")
         } catch (e: CancellationException) { throw e
         } catch (e: Exception) {
             _state.value = _state.value.copy(error = e.message ?: "Could not install the included Linux packages", bundleProgress = null)

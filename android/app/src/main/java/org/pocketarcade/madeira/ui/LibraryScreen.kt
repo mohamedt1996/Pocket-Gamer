@@ -314,12 +314,28 @@ fun SignInCard(onClick: () -> Unit) {
     }
 }
 
-/** Wine's desktop (explorer) in the Steam prefix: Valve's client folders, installers, anything by hand. */
+/** Proton's Windows Explorer desktop, using the same Linux stack as Pocket Dock. */
 fun startDesktop(graph: AppGraph, context: android.content.Context) {
-    graph.prefix.ensure()
-    org.pocketarcade.madeira.Launcher.start(context, org.pocketarcade.madeira.session.LaunchSpec(
-        home = graph.prefix.home.absolutePath, command = "explorer.exe", workingDir = graph.prefix.drive.absolutePath,
-        title = "Desktop", graphics = "dxvk", touchControls = false, diagnostics = graph.settings.diagnostics.value,
-        environment = emptyMap()))
+    if (!org.pocketarcade.madeira.epic.LinuxProton.staged(context, false)) {
+        android.widget.Toast.makeText(context, "Install Proton, the Linux rootfs and Box64 in Settings › Pocket Dock first.",
+            android.widget.Toast.LENGTH_LONG).show()
+        return
+    }
+    graph.scope.launch {
+        try {
+            val plan = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                org.pocketarcade.madeira.epic.LinuxProton.desktop(context,
+                    org.pocketarcade.madeira.model.PocketDock.display(context))
+            }
+            context.startForegroundService(android.content.Intent(context,
+                org.pocketarcade.madeira.epic.LinuxProtonService::class.java)
+                .putExtra(org.pocketarcade.madeira.epic.LinuxProtonService.PLAN, plan.toJson()))
+            android.widget.Toast.makeText(context, "Pocket Dock desktop starting. Keep the X11 display open.",
+                android.widget.Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(context, e.message ?: "Pocket Dock desktop could not start.",
+                android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
 }
 

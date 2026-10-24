@@ -13,6 +13,12 @@ and Box64. It does not launch Valve's Windows client or `dockhost.exe`.
    should say **Pocket Dock**. Choose its Windows program there if Steam's
    launch metadata does not identify one. Tap **Play**.
 
+The setup screen now shows the Linux rootfs, Proton Wine runtime, and Box64
+installation states separately. If a component says **Missing**, install it
+there; **Repair included Linux packages** re-extracts the bundled archives.
+Use **Check Proton status** on a game's page or **Check last desktop run** in
+Pocket Dock when no X11 window appears.
+
 Pocket Dock keeps Proton's game prefix in app-private `steam-proton/<app ID>`
 storage, separate from Steam's downloaded files. Its `proton.log` and
 `status.json` files are in that folder's `sessions/proton` directory.
@@ -22,6 +28,9 @@ may refuse to start. Pocket Dock does not claim to satisfy those checks. It also
 does not currently run Steam's one-time install scripts or trigger automatic
 Steam Cloud sync for Proton sessions. The Android Wine option is legacy and
 requires an APK containing its separate runtime.
+The bundled Proton Wine runtime is x86-64 Linux software; it is not the removed
+Android Wine runtime. The Windows desktop button starts Proton's `explorer.exe`
+and needs Pocket Dock's packages, Box64, and an active X11 display.
 
 The Settings GPU section lists Vulkan features missing from the tablet's
 current driver. When DXVK requirements are missing, Pocket Dock requests

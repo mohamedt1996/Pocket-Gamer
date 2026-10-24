@@ -29,6 +29,15 @@ object LinuxProtonInstaller {
     private const val MAX_ENTRIES = 250_000
 
     data class Bundled(val component: Component, val asset: String, val bytes: Long, val sha256: String)
+    fun installed(context: Context, component: Component): Boolean {
+        val folder = File(LinuxProton.root(context), component.folder)
+        return when (component) {
+            Component.ROOTFS -> File(folder, component.marker).isFile
+            Component.PROTON -> File(folder, component.marker).isFile && File(folder, "files/bin/wine").isFile
+            Component.EAC -> File(folder, component.marker).isFile ||
+                File(folder, "v2/lib/x86_64-linux-gnu/easyanticheat_x64.so").isFile
+        }
+    }
     fun bundled(context: Context): List<Bundled> = runCatching {
         val manifest = context.assets.open("linux-proton/manifest.json").bufferedReader().use { JSONObject(it.readText()) }
         require(manifest.getInt("schema") == 1)

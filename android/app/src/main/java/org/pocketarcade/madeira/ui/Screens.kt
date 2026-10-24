@@ -383,7 +383,7 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
             ToggleRow("Steady performance", steady, "Steady speeds the phone can hold, instead of bursts that heat it up and then slow down. On phones that support it.") { s.setSteadyPerformance(it) }
         }
         SettingsSection("Troubleshooting") {
-            SettingsRow("Windows desktop", subtitle = "Opens Explorer in the Steam games' Windows environment.", icon = Icons.Filled.DesktopWindows) { startDesktop(graph, context) }
+            SettingsRow("Windows desktop", subtitle = "Starts Explorer through Pocket Dock's Linux Proton runtime.", icon = Icons.Filled.DesktopWindows) { startDesktop(graph, context) }
             RowDivider()
             ToggleRow("Diagnostics", diagnostics, "More detail in the game log, for reporting problems. Slower.") { s.setDiagnostics(it) }
             RowDivider()
@@ -417,18 +417,32 @@ private fun PocketDockSetup(graph: AppGraph) {
     val context = LocalContext.current
     val state by graph.epic.state.collectAsState()
     val packages = remember(state.componentRevision) { org.pocketarcade.madeira.epic.LinuxProtonInstaller.bundled(context) }
+    val rootfsReady = org.pocketarcade.madeira.epic.LinuxProtonInstaller.installed(context,
+        org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.ROOTFS)
+    val protonReady = org.pocketarcade.madeira.epic.LinuxProtonInstaller.installed(context,
+        org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.PROTON)
     val box64 = org.pocketarcade.madeira.epic.RuntimeComponents.box64Available(context)
     val ready = org.pocketarcade.madeira.epic.LinuxProton.staged(context, false)
     var display by rememberSaveable { mutableStateOf(org.pocketarcade.madeira.model.PocketDock.display(context)) }
+    var desktopStatus by remember { mutableStateOf<String?>(null) }
     SettingsSection("Linux Proton") {
         SettingsRow("Pocket Dock runtime", if (ready) "Ready" else "Needs setup")
-        if (packages.isNotEmpty()) SettingsRow("Install included Linux packages", "Proton and x86-64 Linux rootfs",
-            icon = Icons.Filled.FileDownload, tint = colors.accent) { graph.epic.installBundledLinux() }
+        SettingsRow("x86-64 Linux rootfs", if (rootfsReady) "Installed" else "Missing")
+        SettingsRow("Proton Wine runtime", if (protonReady) "Installed" else "Missing")
+        SettingsRow("Box64", if (box64) "Installed" else "Missing")
+        if (packages.isNotEmpty()) SettingsRow(
+            if (rootfsReady && protonReady) "Repair included Linux packages" else "Install included Linux packages",
+            "Proton and x86-64 Linux rootfs", icon = Icons.Filled.FileDownload, tint = colors.accent) {
+            if (!state.busy) {
+                if (rootfsReady && protonReady) graph.epic.repairBundledLinux() else graph.epic.installBundledLinux()
+            }
+        }
         else SettingsRow("Included Linux packages", "Missing from this APK", tint = colors.red)
         RowDivider()
         SettingsRow(if (box64) "Repair Box64" else "Install Box64", icon = Icons.Filled.FileDownload,
-            tint = colors.accent) { graph.epic.installBox64() }
+            tint = colors.accent) { if (!state.busy) graph.epic.installBox64() }
         state.bundleProgress?.let { Paragraph(it) }
+        state.box64Probe?.let { Paragraph(it) }
         state.error?.let { Paragraph(it) }
     }
     SettingsSection("Display") {
@@ -437,6 +451,15 @@ private fun PocketDockSetup(graph: AppGraph) {
             runCatching { org.pocketarcade.madeira.model.PocketDock.setDisplay(context, display) }
                 .onFailure { graph.epic.reportError(it.message ?: "Invalid X11 display") }
         }
+    }
+    SettingsSection("Desktop") {
+        SettingsRow("Start Windows desktop", subtitle = "Uses Pocket Dock's Proton runtime and the saved X11 display.",
+            icon = Icons.Filled.DesktopWindows, tint = colors.accent) { startDesktop(graph, context) }
+        SettingsRow("Check last desktop run") {
+            desktopStatus = org.pocketarcade.madeira.epic.LinuxProton.statusText(
+                File(context.filesDir, "desktop-proton"))
+        }
+        desktopStatus?.let { Paragraph(it) }
     }
 }
 

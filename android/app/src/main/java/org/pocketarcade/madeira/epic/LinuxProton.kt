@@ -26,6 +26,17 @@ object LinuxProton {
     }
 
     fun root(context: Context) = File(context.filesDir, "linux-proton")
+    fun statusText(stateDir: File): String = runCatching {
+        val file = File(stateDir, "sessions/proton/status.json")
+        if (!file.isFile) return "No Proton session has started yet"
+        val data = JSONObject(file.readText())
+        when (data.optString("state")) {
+            "running" -> "Proton process is running; check the X11 display"
+            "exited" -> "Proton exited with code ${data.optInt("exitCode")}; see proton.log for details"
+            "failed" -> "Proton could not start: ${data.optString("message", data.optString("reason"))}"
+            else -> "Proton session status is unavailable"
+        }
+    }.getOrDefault("Proton session status could not be read")
     fun staged(context: Context, needsEac: Boolean): Boolean {
         val root = root(context)
         return RuntimeComponents.box64Available(context) && File(root, "rootfs/usr/bin/python3").isFile &&
@@ -60,8 +71,24 @@ object LinuxProton {
                 display: String, needsEac: Boolean, stateDir: File = gameDir): Plan =
         prepare(root(context), RuntimeComponents.verifiedBox64(context), gameDir, executable, title, arguments, display, needsEac, stateDir)
 
+    fun desktop(context: Context, display: String): Plan = desktop(root(context),
+        RuntimeComponents.verifiedBox64(context), File(context.filesDir, "desktop-proton"), display)
+
+    fun desktop(root: File, box64: File, stateDir: File, display: String): Plan =
+        runtimePlan(root, box64, stateDir, stateDir, "Windows desktop", listOf("explorer.exe"), display, false)
+
     fun prepare(root: File, box64: File, gameDir: File, executable: File, title: String, arguments: List<String>,
                 display: String, needsEac: Boolean, stateDir: File = gameDir): Plan {
+        val work = executable.parentFile!!.canonicalFile
+        val install = gameDir.canonicalFile
+        require((work == install || work.path.startsWith(install.path + File.separator)) && executable.isFile) {
+            "Game executable is outside its installation"
+        }
+        return runtimePlan(root, box64, stateDir, work, title, listOf(executable.absolutePath) + arguments, display, needsEac)
+    }
+
+    private fun runtimePlan(root: File, box64: File, stateDir: File, work: File, title: String,
+                            target: List<String>, display: String, needsEac: Boolean): Plan {
         require(box64.isFile && box64.canExecute()) { "Install Box64 before using Linux Proton" }
         val python = requireElf64X86(root, "rootfs/usr/bin/python3")
         requireElf64X86(root, "proton/files/bin/wine")
@@ -71,11 +98,7 @@ object LinuxProton {
         val steam = File(root, "steam").apply { mkdirs() }
         val compat = File(stateDir, "sessions/proton/compatdata").apply { mkdirs() }
         val temp = File(stateDir, "sessions/proton/tmp").apply { mkdirs() }
-        val work = executable.parentFile!!.canonicalFile
-        val install = gameDir.canonicalFile
-        require((work == install || work.path.startsWith(install.path + File.separator)) && executable.isFile) {
-            "Game executable is outside its installation"
-        }
+        work.mkdirs()
         val x11 = display.trim()
         require(x11.isNotEmpty() && !x11.contains('\u0000')) { "Set an X11 DISPLAY for Linux Proton" }
         val eac = File(root, "eac_runtime")
@@ -105,7 +128,7 @@ object LinuxProton {
             "WINEDEBUG" to "-all",
         ).toMutableMap()
         if (needsEac) env["PROTON_EAC_RUNTIME"] = eac.absolutePath
-        return Plan(listOf(box64.absolutePath, python.absolutePath, script.absolutePath, "run", executable.absolutePath) + arguments,
+        return Plan(listOf(box64.absolutePath, python.absolutePath, script.absolutePath, "run") + target,
             env, work.absolutePath, File(stateDir, "sessions/proton/proton.log").absolutePath, title)
     }
 }

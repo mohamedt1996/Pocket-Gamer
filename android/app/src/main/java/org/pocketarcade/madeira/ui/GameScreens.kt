@@ -232,6 +232,7 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
     var confirmUninstall by remember { mutableStateOf(false) }
     var programs by remember { mutableStateOf<List<String>?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var pocketStatus by remember { mutableStateOf<String?>(null) }
     val update = graph.library.updateAvailable(appID)
 
     LaunchedEffect(appID, installed?.buildID) {
@@ -257,6 +258,7 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
                     val plan = org.pocketarcade.madeira.model.PocketDock.prepare(graph, appID)
                     context.startForegroundService(Intent(context, org.pocketarcade.madeira.epic.LinuxProtonService::class.java)
                         .putExtra(org.pocketarcade.madeira.epic.LinuxProtonService.PLAN, plan.toJson()))
+                    notice = "Pocket Dock started Proton. Keep the X11 display open; use Check Proton status below if no window appears."
                 } else Launcher.start(context, Launches.steam(graph, appID))
             }
             catch (e: Exception) { notice = e.message ?: "The game could not start." }
@@ -306,6 +308,13 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
                 }
             }
             CommonSettings(config) { c -> graph.steamConfigs.save(appID, c); graph.scope.launch { graph.library.inspect(appID) } }
+            if (config.startWith == "dock") SettingsSection("Pocket Dock") {
+                SettingsRow("Check Proton status") {
+                    pocketStatus = org.pocketarcade.madeira.epic.LinuxProton.statusText(
+                        File(context.filesDir, "steam-proton/$appID"))
+                }
+                pocketStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
             SettingsSection("Install", footer = "App ${appID} · ${installed.windowsInstallPath}") {
                 SettingsRow("Check files", subtitle = "Compares every file with Steam's current build and fetches what differs.", icon = Icons.Filled.Build) { graph.library.repair(appID) }
                 RowDivider()

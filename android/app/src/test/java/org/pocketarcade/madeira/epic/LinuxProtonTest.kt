@@ -47,6 +47,13 @@ class LinuxProtonTest {
             val rootExe = File(gameDir, "Game.exe").apply { writeText("PE") }
             val rootPlan = LinuxProton.prepare(root, box64, gameDir, rootExe, "Steam root game", emptyList(), ":0", false, steamState)
             assertEquals(gameDir.canonicalPath, rootPlan.workingDir)
+            val desktop = LinuxProton.desktop(root, box64, File(base, "desktop-state"), ":0")
+            assertEquals("explorer.exe", desktop.command.last())
+            assertTrue(desktop.environment["STEAM_COMPAT_DATA_PATH"]!!.contains("desktop-state"))
+            assertEquals("No Proton session has started yet", LinuxProton.statusText(File(base, "desktop-state")))
+            val status = File(base, "desktop-state/sessions/proton/status.json")
+            status.writeText("""{"state":"failed","message":"Cannot find X11 display"}""")
+            assertTrue(LinuxProton.statusText(File(base, "desktop-state")).contains("Cannot find X11 display"))
         } finally { base.deleteRecursively() }
     }
 }

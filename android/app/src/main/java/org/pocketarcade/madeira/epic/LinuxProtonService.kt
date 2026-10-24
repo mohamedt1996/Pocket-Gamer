@@ -51,9 +51,11 @@ class LinuxProtonService : Service() {
                 process = builder.start()
                 val result = process!!.waitFor()
                 status.writeText(JSONObject().put("state", "exited").put("exitCode", result).toString())
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 status.parentFile?.mkdirs()
-                status.writeText(JSONObject().put("state", "failed").toString())
+                status.writeText(JSONObject().put("state", "failed")
+                    .put("reason", e.javaClass.simpleName)
+                    .put("message", e.message?.take(240) ?: "Proton could not start").toString())
             } finally {
                 process = null
                 active.set(false)
