@@ -44,6 +44,9 @@ class LinuxProtonTest {
             val steamPlan = LinuxProton.prepare(root, box64, gameDir, exe, "Steam game", emptyList(), ":0", false, steamState)
             assertTrue(steamPlan.environment["STEAM_COMPAT_DATA_PATH"]!!.startsWith(steamState.absolutePath))
             assertTrue(steamPlan.logFile.startsWith(steamState.absolutePath))
+            val rootExe = File(gameDir, "Game.exe").apply { writeText("PE") }
+            val rootPlan = LinuxProton.prepare(root, box64, gameDir, rootExe, "Steam root game", emptyList(), ":0", false, steamState)
+            assertEquals(gameDir.canonicalPath, rootPlan.workingDir)
         } finally { base.deleteRecursively() }
     }
 }

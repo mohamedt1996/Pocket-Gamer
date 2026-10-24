@@ -1,0 +1,24 @@
+# Pocket Dock on Android
+
+Pocket Dock is the Android-side launch path for downloaded Steam Windows games.
+It uses the app's signed-in Steam session to list and download your library,
+then runs a selected game executable with the included Linux Proton packages
+and Box64. It does not launch Valve's Windows client or `dockhost.exe`.
+
+1. Install the Android Linux Proton APK from this release and sign in to Steam.
+2. Open **Settings → Pocket Dock**. Tap **Install included Linux packages** and
+   **Install Box64**. Install and start an X11 display app on the tablet, then
+   enter its `DISPLAY` value (usually `:0`) and tap **Save display**.
+3. Download a Windows game from the Steam library. Its **Start with** setting
+   should say **Pocket Dock**. Choose its Windows program there if Steam's
+   launch metadata does not identify one. Tap **Play**.
+
+Pocket Dock keeps Proton's game prefix in app-private `steam-proton/<app ID>`
+storage, separate from Steam's downloaded files. Its `proton.log` and
+`status.json` files are in that folder's `sessions/proton` directory.
+
+Games requiring the Steam client, Steamworks, Steam DRM, or unsupported anti-cheat
+may refuse to start. Pocket Dock does not claim to satisfy those checks. It also
+does not currently run Steam's one-time install scripts or trigger automatic
+Steam Cloud sync for Proton sessions. The Android Wine option is legacy and
+requires an APK containing its separate runtime.

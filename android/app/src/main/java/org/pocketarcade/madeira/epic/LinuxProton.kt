@@ -72,7 +72,10 @@ object LinuxProton {
         val compat = File(stateDir, "sessions/proton/compatdata").apply { mkdirs() }
         val temp = File(stateDir, "sessions/proton/tmp").apply { mkdirs() }
         val work = executable.parentFile!!.canonicalFile
-        require(work.path.startsWith(gameDir.canonicalPath + File.separator) && executable.isFile) { "Game executable is outside its installation" }
+        val install = gameDir.canonicalFile
+        require((work == install || work.path.startsWith(install.path + File.separator)) && executable.isFile) {
+            "Game executable is outside its installation"
+        }
         val x11 = display.trim()
         require(x11.isNotEmpty() && !x11.contains('\u0000')) { "Set an X11 DISPLAY for Linux Proton" }
         val eac = File(root, "eac_runtime")

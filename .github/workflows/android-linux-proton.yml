@@ -92,6 +92,7 @@ jobs:
             release-assets/box64-android-arm64-16k.zst
           cp android/app/src/main/assets/runner/BOX64-LICENSE.txt release-assets/BOX64-LICENSE.txt
           cp android/LINUX-PROTON.md release-assets/LINUX-PROTON.md
+          cp android/POCKET-DOCK.md release-assets/POCKET-DOCK.md
           cp android/EAC-SETUP.md release-assets/EAC-SETUP.md
           (cd release-assets && sha256sum -- * > SHA256SUMS.txt)
           for f in release-assets/*; do
@@ -146,7 +147,7 @@ jobs:
           cat > release-notes.md <<EOF
           Pocket Arcade Android Linux Proton build from commit ${GITHUB_SHA}.
 
-          Install \`PocketArcade-Android-Linux-Proton-arm64-debug.apk\` on an ARM64 Android tablet. The APK contains Box64, GE-Proton 11-11 and the x86-64 Debian rootfs. In the Epic screen, install Box64, then tap **Install included Linux packages**. The separate archives, manifest, Box64 file, license and checksums are provided as release assets for inspection and manual staging.
+          Install \`PocketArcade-Android-Linux-Proton-arm64-debug.apk\` on an ARM64 Android tablet. The APK contains Box64, GE-Proton 11-11 and the x86-64 Debian rootfs. For Steam games, open **Settings → Pocket Dock**, install the included Linux packages and Box64, and configure an X11 display. See \`POCKET-DOCK.md\`. The separate archives, manifest, Box64 file, license and checksums are provided as release assets for inspection and manual staging.
 
           ${eac_note} EAC support also depends on the game's publisher. Proton execution and Rocket League matchmaking have not been verified on the Mi Pad 7.
 
