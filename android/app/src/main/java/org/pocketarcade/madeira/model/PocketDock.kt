@@ -5,12 +5,17 @@ import android.content.Context
 import org.pocketarcade.madeira.AppGraph
 import org.pocketarcade.madeira.core.DirectStart
 import org.pocketarcade.madeira.epic.LinuxProton
+import org.pocketarcade.madeira.platform.GpuCaps
 import org.pocketarcade.madeira.session.CommandLine
 import java.io.File
 
 /** Android-side Steam library launcher using the already bundled Linux Proton stack. */
 object PocketDock {
     private const val PREFS = "pocket-dock"
+    /** Proton's DXVK needs Vulkan features some Android drivers do not expose. */
+    fun graphicsEnvironment(gpu: GpuCaps.Info?, requested: String = "auto"): Map<String, String> =
+        if (requested == "wine" || requested == "auto" && gpu != null && !gpu.dxvk)
+            mapOf("PROTON_USE_WINED3D" to "1") else emptyMap()
     fun display(context: Context): String = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         .getString("display", ":0") ?: ":0"
     fun setDisplay(context: Context, value: String) {
@@ -38,7 +43,7 @@ object PocketDock {
         val state = File(graph.context.filesDir, "steam-proton/$appID")
         val plan = LinuxProton.prepare(graph.context, folder, exe, info?.name ?: installed.name,
             args, display(graph.context), needsEac = false, stateDir = state)
-        return plan.copy(environment = plan.environment + mapOf(
+        return plan.copy(environment = plan.environment + graphicsEnvironment(GpuCaps.load(graph.context), config.graphics) + mapOf(
             "SteamAppId" to appID.toString(), "SteamGameId" to appID.toString()))
     }
 }

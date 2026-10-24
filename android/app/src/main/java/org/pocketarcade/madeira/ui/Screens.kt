@@ -369,17 +369,15 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
             ToggleRow("Ambient light", ambient, "Game artwork glows softly behind its card.") { s.setAmbient(it) }
         }
         val gpu = org.pocketarcade.madeira.platform.GpuCaps.current
-        if (gpu != null) SettingsSection("GPU", footer = when {
-            !gpu.vulkan -> "Games need a Vulkan driver; this phone did not offer one."
-            gpu.dxvk && gpu.vkd3d -> "This driver runs DXVK and VKD3D-Proton: Direct3D 8–12 games use them on the GPU."
-            gpu.dxvk -> "Direct3D 12 games use Wine's own Direct3D 12 here: VKD3D-Proton needs ${gpu.vkd3dMissing.take(4).joinToString(", ")}."
-            else -> "This driver lacks what DXVK needs (${gpu.dxvkMissing.take(4).joinToString(", ")}), so games use Wine's own Direct3D on the GPU's Vulkan driver. It works more widely but is slower."
-        }) {
+        if (gpu != null) SettingsSection("GPU", footer =
+            "This checks the tablet's current Vulkan driver against the bundled graphics layers. Pocket Dock uses WineD3D for Direct3D 8–11 when DXVK is unavailable; that path also needs a working X11 OpenGL display. Direct3D 12 may still fail.") {
             SettingsRow(gpu.name.ifBlank { "Graphics" }, gpu.summary().substringAfter(" · ", ""))
             RowDivider()
-            SettingsRow("DXVK (Direct3D 8–11)", if (gpu.dxvk) "Supported" else "Not supported")
+            SettingsRow("DXVK (Direct3D 8–11)", if (gpu.dxvk) "Driver features present" else "Driver features missing",
+                subtitle = gpu.dxvkMissing.take(5).takeIf { it.isNotEmpty() }?.joinToString(", "))
             RowDivider()
-            SettingsRow("VKD3D-Proton (Direct3D 12)", if (gpu.vkd3d) "Supported" else "Not supported")
+            SettingsRow("VKD3D-Proton (Direct3D 12)", if (gpu.vkd3d) "Driver features present" else "Driver features missing",
+                subtitle = gpu.vkd3dMissing.take(5).takeIf { it.isNotEmpty() }?.joinToString(", "))
         }
         SettingsSection("Heat", footer = "Each game's frame cap and CPU mode are in its settings. Android's battery game mode (game dashboard or the phone's game booster) lowers the automatic frame cap to 30.") {
             ToggleRow("Steady performance", steady, "Steady speeds the phone can hold, instead of bursts that heat it up and then slow down. On phones that support it.") { s.setSteadyPerformance(it) }

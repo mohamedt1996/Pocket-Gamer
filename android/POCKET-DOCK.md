@@ -22,3 +22,9 @@ may refuse to start. Pocket Dock does not claim to satisfy those checks. It also
 does not currently run Steam's one-time install scripts or trigger automatic
 Steam Cloud sync for Proton sessions. The Android Wine option is legacy and
 requires an APK containing its separate runtime.
+
+The Settings GPU section lists Vulkan features missing from the tablet's
+current driver. When DXVK requirements are missing, Pocket Dock requests
+Proton's WineD3D fallback for Direct3D 8–11. That fallback needs OpenGL from
+the X11 display and is unverified on the Mi Pad 7. It does not solve missing
+VKD3D-Proton requirements for Direct3D 12 games.
