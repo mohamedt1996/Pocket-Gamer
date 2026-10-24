@@ -23,8 +23,15 @@ class LinuxProtonTest {
             val root = File(base, "runtime").apply { mkdirs() }
             val box64 = File(base, "box64").apply { writeText("runner"); setExecutable(true) }
             elf(File(root, "rootfs/usr/bin/python3"))
+            File(root, "rootfs/usr/local/lib/python3.11").mkdirs()
             elf(File(root, "proton/files/bin/wine"))
             File(root, "rootfs/lib/x86_64-linux-gnu/libc.so.6").apply { parentFile!!.mkdirs(); writeText("glibc") }
+            File(root, "rootfs/usr/lib/i386-linux-gnu/libc.so.6").apply { parentFile!!.mkdirs(); writeText("i386 glibc") }
+            File(root, "rootfs/lib/ld-linux.so.2").apply { parentFile!!.mkdirs(); writeText("i386 loader") }
+            for (arch in listOf("x86_64", "i686"))
+                File(root, "rootfs/usr/share/vulkan/icd.d/lvp_icd.$arch.json").apply {
+                    parentFile!!.mkdirs(); writeText("{}")
+                }
             File(root, "proton/proton").writeText("proton")
             val gameDir = File(base, "game").apply { mkdirs() }
             val exe = File(gameDir, "content/RocketLeague.exe").apply { parentFile!!.mkdirs(); writeText("PE") }
@@ -37,6 +44,10 @@ class LinuxProtonTest {
             assertEquals(listOf(box64.absolutePath, File(root, "rootfs/usr/bin/python3").absolutePath,
                 File(root, "proton/proton").absolutePath, "run", exe.absolutePath, "-EpicPortal"), plan.command)
             assertEquals(File(root, "eac_runtime").absolutePath, plan.environment["PROTON_EAC_RUNTIME"])
+            assertTrue(plan.environment["BOX64_LD_LIBRARY_PATH"]!!.contains("i386-linux-gnu"))
+            assertTrue(plan.environment["BOX64_LD_LIBRARY_PATH"]!!.contains("rootfs/usr/local/lib"))
+            assertEquals(File(root, "rootfs/usr/local").absolutePath, plan.environment["PYTHONHOME"])
+            assertTrue(plan.environment["VK_ICD_FILENAMES"]!!.endsWith("lvp_icd.x86_64.json"))
             assertTrue(plan.environment["STEAM_COMPAT_DATA_PATH"]!!.contains("sessions/proton/compatdata"))
             assertFalse(plan.environment.containsKey("WINEPREFIX"))
             assertEquals(plan, LinuxProton.Plan.fromJson(plan.toJson()))

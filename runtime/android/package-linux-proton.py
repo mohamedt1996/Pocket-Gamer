@@ -46,12 +46,36 @@ def verify(path, kind):
             if len(candidates) != 1:
                 raise ValueError(f"{kind}: expected one {marker}")
             prefix = candidates[0][:-len(marker)]
-        required = {"rootfs": ["usr/bin/python3", "usr/lib/x86_64-linux-gnu/libc.so.6"],
+        required = {"rootfs": ["usr/bin/python3", "usr/lib/x86_64-linux-gnu/libc.so.6",
+                              "usr/lib/i386-linux-gnu/libc.so.6",
+                              "usr/lib/ld-linux.so.2",
+                              "usr/lib/x86_64-linux-gnu/libvulkan_lvp.so",
+                              "usr/lib/i386-linux-gnu/libvulkan_lvp.so",
+                              "usr/share/vulkan/icd.d/lvp_icd.x86_64.json",
+                              "usr/share/vulkan/icd.d/lvp_icd.i686.json"],
                     "proton": ["proton", "files/bin/wine"], "eac_runtime": []}[kind]
         for relative in required:
             if prefix + relative not in members and not (kind == "rootfs" and relative.startswith("usr/lib/") and
                 prefix + relative.removeprefix("usr/") in members):
                 raise ValueError(f"{kind}: missing {relative}")
+        if kind == "rootfs":
+            for arch in ("x86_64", "i686"):
+                name = prefix + f"usr/share/vulkan/icd.d/lvp_icd.{arch}.json"
+                stream = tar.extractfile(members[name])
+                icd = json.load(stream) if stream else {}
+                if icd.get("ICD", {}).get("library_path") != "libvulkan_lvp.so":
+                    raise ValueError(f"rootfs: {arch} Vulkan ICD is not relocatable")
+            for relative, elf_class, machine in (
+                ("usr/lib/x86_64-linux-gnu/libvulkan_lvp.so", 2, 62),
+                ("usr/lib/i386-linux-gnu/libc.so.6", 1, 3),
+                ("usr/lib/i386-linux-gnu/libvulkan_lvp.so", 1, 3),
+            ):
+                item = members[prefix + relative]
+                stream = tar.extractfile(item)
+                header = stream.read(20) if stream else b""
+                if header[:4] != b"\x7fELF" or header[4] != elf_class or \
+                        struct.unpack_from("<H", header, 18)[0] != machine:
+                    raise ValueError(f"rootfs: wrong ELF architecture in {relative}")
         if kind in ("rootfs", "proton"):
             elf_name = prefix + ("usr/bin/python3" if kind == "rootfs" else "files/bin/wine")
             for _ in range(16):

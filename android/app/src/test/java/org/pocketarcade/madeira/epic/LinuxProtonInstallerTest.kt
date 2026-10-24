@@ -75,6 +75,8 @@ class LinuxProtonInstallerTest {
             }
             assertTrue(File(root, "rootfs/usr/bin/python3").isFile)
             assertTrue(File(root, "rootfs/usr/lib/x86_64-linux-gnu/libc.so.6").isFile)
+            assertTrue(File(root, "rootfs/usr/lib/i386-linux-gnu/libc.so.6").isFile)
+            assertTrue(File(root, "rootfs/usr/share/vulkan/icd.d/lvp_icd.i686.json").isFile)
             assertTrue(File(root, "proton/proton").isFile)
             assertTrue(File(root, "proton/files/bin/wine").isFile)
         } finally { root.deleteRecursively() }

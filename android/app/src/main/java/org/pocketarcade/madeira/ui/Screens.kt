@@ -8,6 +8,9 @@
 package org.pocketarcade.madeira.ui
 
 import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -421,15 +424,22 @@ private fun PocketDockSetup(graph: AppGraph) {
         org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.ROOTFS)
     val protonReady = org.pocketarcade.madeira.epic.LinuxProtonInstaller.installed(context,
         org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.PROTON)
-    val box64 = org.pocketarcade.madeira.epic.RuntimeComponents.box64Available(context)
+    val box64 = org.pocketarcade.madeira.epic.RuntimeComponents.box32Available(context)
     val ready = org.pocketarcade.madeira.epic.LinuxProton.staged(context, false)
     var display by rememberSaveable { mutableStateOf(org.pocketarcade.madeira.model.PocketDock.display(context)) }
     var desktopStatus by remember { mutableStateOf<String?>(null) }
+    var pickingComponent by rememberSaveable { mutableStateOf<String?>(null) }
+    val packagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) pickingComponent?.let {
+            graph.epic.importLinuxComponent(org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.valueOf(it), uri)
+        }
+        pickingComponent = null
+    }
     SettingsSection("Linux Proton") {
         SettingsRow("Pocket Dock Linux packages", if (ready) "Staged; launch unverified" else "Needs setup")
         SettingsRow("x86-64 Linux rootfs", if (rootfsReady) "Installed" else "Missing")
         SettingsRow("Proton Wine runtime", if (protonReady) "Installed" else "Missing")
-        SettingsRow("Box64", if (box64) "Installed" else "Missing")
+        SettingsRow("Box64 + Box32 Linux translator", if (box64) "Installed" else "Missing")
         SettingsRow("Android Wine/FEX runtime", if (org.pocketarcade.madeira.PortRuntime(context).bundled())
             "Included in APK" else "Not included in this APK")
         if (packages.isNotEmpty()) SettingsRow(
@@ -440,9 +450,20 @@ private fun PocketDockSetup(graph: AppGraph) {
             }
         }
         else SettingsRow("Included Linux packages", "Missing from this APK", tint = colors.red)
+        for (component in listOf(org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.ROOTFS,
+            org.pocketarcade.madeira.epic.LinuxProtonInstaller.Component.PROTON)) {
+            SettingsRow("Import ${component.folder} .tar.gz", icon = Icons.Filled.FileDownload, tint = colors.accent) {
+                if (!state.busy) {
+                    pickingComponent = component.name
+                    packagePicker.launch(arrayOf("*/*"))
+                }
+            }
+        }
         RowDivider()
-        SettingsRow(if (box64) "Repair Box64" else "Install Box64", icon = Icons.Filled.FileDownload,
-            tint = colors.accent) { if (!state.busy) graph.epic.installBox64() }
+        if (org.pocketarcade.madeira.epic.RuntimeComponents.box32Bundled(context))
+            SettingsRow(if (box64) "Repair Box64 + Box32" else "Install Box64 + Box32", icon = Icons.Filled.FileDownload,
+                tint = colors.accent) { if (!state.busy) graph.epic.installBox64() }
+        else SettingsRow("Box32 Linux translator", "Missing from this APK", tint = colors.red)
         state.bundleProgress?.let { Paragraph(it) }
         state.box64Probe?.let { Paragraph(it) }
         state.error?.let { Paragraph(it) }

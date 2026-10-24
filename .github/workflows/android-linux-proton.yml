@@ -106,6 +106,19 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Build 16 KB Android Box64 with Box32 Linux support
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq ninja-build zstd
+          source_dir="$RUNNER_TEMP/box64-source"
+          git init -q "$source_dir"
+          git -C "$source_dir" remote add origin https://github.com/ptitSeb/box64.git
+          git -C "$source_dir" fetch -q --depth 1 origin 420eda69ff51ab5d5a7cbc3dee2e70433be3411d
+          git -C "$source_dir" checkout -q --detach FETCH_HEAD
+          runtime/android/build-box64-16k.sh "$source_dir" \
+            "$ANDROID_HOME/ndk/27.3.13750724" \
+            android/app/src/main/assets/runner/box64-box32-android-arm64-16k.zst --box32
       - name: Fetch GE-Proton and build the x86-64 rootfs
         env:
           EAC_RUNTIME_URL: ${{ secrets.PROTON_EAC_RUNTIME_URL }}
@@ -139,6 +152,23 @@ jobs:
           apk=android/app/build/outputs/apk/debug/app-debug.apk
           python3 runtime/android/check-apk.py "$apk"
           python3 runtime/android/verify-linux-proton-apk.py "$apk" --require-android-runtime
+          aapt2 dump badging "$apk" >/dev/null
+          apksigner verify --verbose "$apk"
+          zipalign -c -v 4 "$apk" >/dev/null
+      - name: Build smaller Android APK with importable Linux archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/full.apk"
+          mv android/app/src/main/assets/linux-proton "$RUNNER_TEMP/linux-proton-assets"
+          (cd android && gradle --no-daemon --max-workers=2 \
+            -Dorg.gradle.jvmargs='-Xmx12g -Dfile.encoding=UTF-8' \
+            --console=plain clean assembleDebug)
+          mv "$RUNNER_TEMP/linux-proton-assets" android/app/src/main/assets/linux-proton
+          apk=android/app/build/outputs/apk/debug/app-debug.apk
+          python3 runtime/android/check-apk.py "$apk"
+          python3 runtime/android/verify-linux-proton-apk.py "$apk" --native-only
+          aapt2 dump badging "$apk" >/dev/null
           apksigner verify --verbose "$apk"
           zipalign -c -v 4 "$apk" >/dev/null
       - name: Stage downloadable files and checksums
@@ -146,12 +176,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-assets
-          cp android/app/build/outputs/apk/debug/app-debug.apk \
+          cp "$RUNNER_TEMP/full.apk" \
             release-assets/PocketArcade-Android-Linux-Proton-arm64-debug.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+            release-assets/PocketArcade-Android-Wine-FEX-arm64-lite-debug.apk
           cp android/app/src/main/assets/linux-proton/proton.tgz \
             release-assets/GE-Proton11-11-x86_64.tgz
           cp android/app/src/main/assets/linux-proton/rootfs.tgz \
-            release-assets/Debian-bookworm-x86_64-rootfs.tgz
+            release-assets/Debian-bookworm-x86_64-i386-rootfs.tgz
           if [[ -f android/app/src/main/assets/linux-proton/eac_runtime.tgz ]]; then
             cp android/app/src/main/assets/linux-proton/eac_runtime.tgz \
               release-assets/Proton-EasyAntiCheat-Runtime.tgz
@@ -164,6 +196,10 @@ jobs:
             release-assets/PocketArcade-Android-Wine-FEX-arm64ec.sha256
           cp android/app/src/main/assets/runner/box64-android-arm64-16k.zst \
             release-assets/box64-android-arm64-16k.zst
+          cp android/app/src/main/assets/runner/box64-box32-android-arm64-16k.zst \
+            release-assets/box64-box32-android-arm64-16k.zst
+          cp android/app/src/main/assets/runner/box64-box32-android-arm64-16k.json \
+            release-assets/box64-box32-android-arm64-16k.json
           cp android/app/src/main/assets/runner/BOX64-LICENSE.txt release-assets/BOX64-LICENSE.txt
           cp android/LINUX-PROTON.md release-assets/LINUX-PROTON.md
           cp android/POCKET-DOCK.md release-assets/POCKET-DOCK.md
@@ -181,12 +217,47 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 30
+      - name: Upload APK for Android package-manager smoke test
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketArcade-lite-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  install_smoke:
+    name: Install combined APK in Android package manager
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketArcade-lite-apk
+          path: apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -partition-size 8192
+          script: |
+            adb install apk/app-debug.apk
+            adb shell pm path org.pocketarcade.madeira
 
   release:
     if: >-
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/android-proton-v')) ||
       (github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref == 'refs/heads/main')
-    needs: build
+    needs: [build, install_smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -222,11 +293,11 @@ jobs:
           cat > release-notes.md <<EOF
           Pocket Arcade combined Android Wine/FEX and Linux Proton build from commit ${GITHUB_SHA}.
 
-          Install \`PocketArcade-Android-Linux-Proton-arm64-debug.apk\` on an ARM64 Android tablet. The APK contains the Android ARM64EC Proton-Wine/FEX runtime (x86 and x64 Windows modules), Box64, GE-Proton 11-11, and the x86-64 Debian rootfs. Select **Android Wine/FEX** for the native Android path. **Pocket Dock** remains an experimental Linux path requiring a separate X11 display and graphics bridge. The separate archives and checksums are provided for inspection.
+          For tablets whose package manager rejects very large APKs, install \`PocketArcade-Android-Wine-FEX-arm64-lite-debug.apk\`. It includes Android ARM64EC Proton-Wine/FEX and Box64/Box32. Import the separate GE-Proton and multiarch Debian .tgz assets under **Settings → Pocket Dock**. The larger \`PocketArcade-Android-Linux-Proton-arm64-debug.apk\` embeds them. Pocket Dock uses CPU-rendered Vulkan and a separate X11 display; Adreno-accelerated Linux Vulkan remains unverified. Select **Android Wine/FEX** for the native Android GPU path.
 
           ${eac_note} EAC support also depends on the game's publisher. Proton execution and Rocket League matchmaking have not been verified on the Mi Pad 7.
 
-          This APK is debug-signed and experimental. See \`LINUX-PROTON.md\` for setup and limitations.
+          These APKs are debug-signed and experimental. Each Actions run creates a different debug signing key, so Android cannot install a new run as an update over an older alpha. Back up app data before uninstalling an older build. See \`LINUX-PROTON.md\` for setup and limitations.
           EOF
           gh release create "$tag" release-assets/* --repo "$GH_REPO" \
             --target "$GITHUB_SHA" --title "Pocket Arcade Android Wine/FEX + Proton $tag" \

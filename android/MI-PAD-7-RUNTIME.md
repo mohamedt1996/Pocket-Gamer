@@ -33,6 +33,18 @@ result alongside the Linux packages. Its APK verifier requires the native
 runtime and the Windows modules for both bitnesses. CI packaging is still not
 a Mi Pad 7 rendering test.
 
+The subsequent Linux experiment adds an i386 Debian userland and a 16 KB-aligned
+Android Box64 build with upstream Box32 enabled. It also bundles Mesa lavapipe
+for both guest bitnesses. This is a **CPU-rendered Vulkan fallback** for testing
+the Linux execution path, not an Adreno 732 graphics driver. It needs an X11
+server on the tablet and has not been device-validated. Do not infer usable
+game performance or EAC compatibility from its package checks.
+The exported multiarch rootfs was validated locally; isolated x86-64 and i386
+processes each created a Vulkan instance and enumerated one lavapipe device.
+The i386 process ran through `qemu-i386-static` because the cloud host kernel
+does not execute 32-bit x86 ELF directly. This validates the rootfs ICDs, not
+Box32 on the tablet or Proton's X11 presentation.
+
 ## Device-specific graphics route
 
 GameNative's current [Adreno default selection](https://github.com/utkarshdalal/GameNative/blob/11dfac2f36f8fd2b66aaed30b46f3914582cbe17/app/src/main/java/app/gamenative/utils/ContainerUtils.kt#L48-L62)

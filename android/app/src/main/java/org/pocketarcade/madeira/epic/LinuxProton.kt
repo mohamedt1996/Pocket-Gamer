@@ -39,7 +39,11 @@ object LinuxProton {
     }.getOrDefault("Proton session status could not be read")
     fun staged(context: Context, needsEac: Boolean): Boolean {
         val root = root(context)
-        return RuntimeComponents.box64Available(context) && File(root, "rootfs/usr/bin/python3").isFile &&
+        return RuntimeComponents.box32Available(context) && File(root, "rootfs/usr/bin/python3").isFile &&
+            File(root, "rootfs/usr/lib/i386-linux-gnu/libc.so.6").isFile &&
+            File(root, "rootfs/lib/ld-linux.so.2").exists() &&
+            File(root, "rootfs/usr/share/vulkan/icd.d/lvp_icd.x86_64.json").isFile &&
+            File(root, "rootfs/usr/share/vulkan/icd.d/lvp_icd.i686.json").isFile &&
             File(root, "proton/proton").isFile && File(root, "proton/files/bin/wine").isFile &&
             (!needsEac || File(root, "eac_runtime/v2/lib/x86_64-linux-gnu/easyanticheat.so").isFile ||
                 File(root, "eac_runtime/v2/lib/x86_64-linux-gnu/easyanticheat_x64.so").isFile)
@@ -69,10 +73,10 @@ object LinuxProton {
     }
     fun prepare(context: Context, gameDir: File, executable: File, title: String, arguments: List<String>,
                 display: String, needsEac: Boolean, stateDir: File = gameDir): Plan =
-        prepare(root(context), RuntimeComponents.verifiedBox64(context), gameDir, executable, title, arguments, display, needsEac, stateDir)
+        prepare(root(context), RuntimeComponents.verifiedLinuxBox(context), gameDir, executable, title, arguments, display, needsEac, stateDir)
 
     fun desktop(context: Context, display: String): Plan = desktop(root(context),
-        RuntimeComponents.verifiedBox64(context), File(context.filesDir, "desktop-proton"), display)
+        RuntimeComponents.verifiedLinuxBox(context), File(context.filesDir, "desktop-proton"), display)
 
     fun desktop(root: File, box64: File, stateDir: File, display: String): Plan =
         runtimePlan(root, box64, stateDir, stateDir, "Windows desktop", listOf("explorer.exe"), display, false)
@@ -93,6 +97,16 @@ object LinuxProton {
         val python = requireElf64X86(root, "rootfs/usr/bin/python3")
         requireElf64X86(root, "proton/files/bin/wine")
         library(root, "libc.so.6")
+        requireInside(root, File(root, "rootfs/usr/lib/i386-linux-gnu/libc.so.6")).also {
+            require(it.isFile) { "Missing i386 glibc; repair the Linux rootfs" }
+        }
+        require(File(root, "rootfs/lib/ld-linux.so.2").exists()) { "Missing i386 ELF loader" }
+        requireInside(root, File(root, "rootfs/usr/share/vulkan/icd.d/lvp_icd.x86_64.json")).also {
+            require(it.isFile) { "Missing x86-64 software Vulkan ICD" }
+        }
+        requireInside(root, File(root, "rootfs/usr/share/vulkan/icd.d/lvp_icd.i686.json")).also {
+            require(it.isFile) { "Missing i386 software Vulkan ICD" }
+        }
         val script = requireInside(root, File(root, "proton/proton"))
         require(script.isFile) { "Stage a complete Proton distribution in linux-proton/proton" }
         val steam = File(root, "steam").apply { mkdirs() }
@@ -108,18 +122,26 @@ object LinuxProton {
                 "Stage the official Proton EasyAntiCheat Runtime in linux-proton/eac_runtime"
             }
         }
-        val paths = listOf("rootfs/lib/x86_64-linux-gnu", "rootfs/usr/lib/x86_64-linux-gnu", "rootfs/lib64",
+        val paths = listOf("rootfs/lib/x86_64-linux-gnu", "rootfs/usr/lib/x86_64-linux-gnu", "rootfs/usr/local/lib", "rootfs/lib64",
             "rootfs/usr/lib64", "proton/files/lib64", "proton/files/lib", "proton/files/lib64/wine/x86_64-unix")
+            .map { File(root, it).absolutePath }.joinToString(":")
+        val paths32 = listOf("rootfs/lib/i386-linux-gnu", "rootfs/usr/lib/i386-linux-gnu", "proton/files/lib/wine/i386-unix")
             .map { File(root, it).absolutePath }.joinToString(":")
         val env = mapOf(
             "HOME" to File(stateDir, "sessions/proton").absolutePath,
             "TMPDIR" to temp.absolutePath,
             "DISPLAY" to x11,
-            "PATH" to listOf(File(root, "rootfs/usr/bin"), File(root, "rootfs/bin"), File(root, "proton/files/bin"))
+            "PATH" to listOf(File(root, "rootfs/usr/local/bin"), File(root, "rootfs/usr/bin"), File(root, "rootfs/bin"), File(root, "proton/files/bin"))
                 .joinToString(":") { it.absolutePath } + ":/system/bin",
-            "BOX64_PATH" to listOf(File(root, "rootfs/usr/bin"), File(root, "rootfs/bin"), File(root, "proton/files/bin"))
+            "BOX64_PATH" to listOf(File(root, "rootfs/usr/local/bin"), File(root, "rootfs/usr/bin"), File(root, "rootfs/bin"), File(root, "proton/files/bin"))
                 .joinToString(":") { it.absolutePath },
-            "BOX64_LD_LIBRARY_PATH" to paths,
+            // Box32 in this Box64 build reads BOX64_LD_LIBRARY_PATH too. The ELF loader
+            // chooses libraries matching the guest process's architecture.
+            "BOX64_LD_LIBRARY_PATH" to "$paths:$paths32",
+            // Use the matching x86/i386 Mesa loaders and software ICDs. Android's ARM64
+            // libvulkan cannot expose an X11 surface to this separate Linux process.
+            "BOX64_PREFER_EMULATED" to "1",
+            "VK_ICD_FILENAMES" to File(root, "rootfs/usr/share/vulkan/icd.d/lvp_icd.x86_64.json").absolutePath,
             "STEAM_COMPAT_DATA_PATH" to compat.absolutePath,
             "STEAM_COMPAT_CLIENT_INSTALL_PATH" to steam.absolutePath,
             "STEAM_COMPAT_TOOL_PATHS" to File(root, "proton").absolutePath,
@@ -127,6 +149,8 @@ object LinuxProton {
             "PROTON_NO_FSYNC" to "1",
             "WINEDEBUG" to "-all",
         ).toMutableMap()
+        val pythonHome = File(root, "rootfs/usr/local")
+        if (File(pythonHome, "lib/python3.11").isDirectory) env["PYTHONHOME"] = pythonHome.absolutePath
         if (needsEac) env["PROTON_EAC_RUNTIME"] = eac.absolutePath
         return Plan(listOf(box64.absolutePath, python.absolutePath, script.absolutePath, "run") + target,
             env, work.absolutePath, File(stateDir, "sessions/proton/proton.log").absolutePath, title)

@@ -7,6 +7,7 @@ import android.system.OsConstants
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import org.json.JSONObject
 import org.pocketarcade.madeira.steam.Zstd
 import java.io.File
 import java.nio.ByteBuffer
@@ -29,12 +30,28 @@ object RuntimeComponents {
     const val BOX64_16K_BINARY_SHA = "99d5c29ce068b35f92bf8500cf6966d94dc5ef8fd6c9b0242f1a006bd55a0b4e"
     private fun file(context: Context) = File(context.filesDir, "runtime-components/wowbox64-0.4.2.dll")
     private fun box64File(context: Context) = File(context.filesDir, "runtime-components/box64-0.4.2")
+    private fun box32File(context: Context) = File(context.filesDir, "runtime-components/box64-box32-16k")
+    private const val BOX32_MANIFEST = "runner/box64-box32-android-arm64-16k.json"
     private fun hostPageSize(): Int = Os.sysconf(OsConstants._SC_PAGESIZE).also {
         require(it in 4096..65536) { "Android did not report a usable page size" }
     }.toInt()
     fun available(context: Context): Boolean = file(context).isFile
-    fun box64Available(context: Context): Boolean = box64File(context).isFile
+    fun box64Available(context: Context): Boolean = box32Available(context) || box64File(context).isFile
+    fun box32Available(context: Context): Boolean = box32File(context).isFile
+    fun box32Bundled(context: Context): Boolean = runCatching { context.assets.open(BOX32_MANIFEST).close(); true }.getOrDefault(false)
+    fun verifiedLinuxBox(context: Context): File {
+        val binary = box32File(context)
+        require(binary.isFile && binary.canExecute()) { "Install Box64 with Box32 for Linux Proton" }
+        val manifest = context.assets.open(BOX32_MANIFEST).bufferedReader().use { JSONObject(it.readText()) }
+        require(manifest.getBoolean("box32") && manifest.getString("sourceCommit") ==
+            "420eda69ff51ab5d5a7cbc3dee2e70433be3411d") { "Unexpected Box32 build" }
+        val contents = binary.readBytes()
+        require(sha(contents) == manifest.getString("binarySha256")) { "Repair the Linux Box64/Box32 component" }
+        validateBox64(contents, hostPageSize())
+        return binary
+    }
     fun verifiedBox64(context: Context): File {
+        if (box32Available(context)) return verifiedLinuxBox(context)
         val binary = box64File(context)
         require(binary.isFile && binary.canExecute()) { "Install Box64 before using Linux Proton" }
         val contents = binary.readBytes()
@@ -56,6 +73,10 @@ object RuntimeComponents {
         Files.move(temp.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING)
     }
     suspend fun installBox64(context: Context, http: EpicHttp) = withContext(Dispatchers.IO) {
+        if (box32Bundled(context)) {
+            installBox32(context)
+            return@withContext
+        }
         val pageSize = hostPageSize()
         val binary = if (pageSize > 4096) {
             require(pageSize <= 16384) { "No Box64 build supports this Android page size" }
@@ -76,6 +97,24 @@ object RuntimeComponents {
         val temp = File(dest.parentFile, dest.name + ".tmp")
         temp.writeBytes(binary)
         check(temp.setExecutable(true, true)) { "Android could not make Box64 executable" }
+        Files.move(temp.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING)
+    }
+    private fun installBox32(context: Context) {
+        val manifest = context.assets.open(BOX32_MANIFEST).bufferedReader().use { JSONObject(it.readText()) }
+        require(manifest.getInt("schema") == 1 && manifest.getBoolean("box32") &&
+            manifest.getString("sourceCommit") == "420eda69ff51ab5d5a7cbc3dee2e70433be3411d")
+        val name = manifest.getString("asset")
+        require(name == "box64-box32-android-arm64-16k.zst")
+        val compressed = context.assets.open("runner/$name").use { it.readBytes() }
+        require(sha(compressed) == manifest.getString("archiveSha256")) { "Box32 archive checksum failed" }
+        val binary = Zstd.decompress(compressed, 0, compressed.size, 64 * 1024 * 1024)
+            ?: error("Box32 archive could not be decoded")
+        require(sha(binary) == manifest.getString("binarySha256")) { "Box32 binary checksum failed" }
+        validateBox64(binary, hostPageSize())
+        val dest = box32File(context).also { it.parentFile!!.mkdirs() }
+        val temp = File(dest.parentFile, dest.name + ".tmp")
+        temp.writeBytes(binary)
+        check(temp.setExecutable(true, true)) { "Android could not make Box32 executable" }
         Files.move(temp.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING)
     }
     suspend fun probeBox64(context: Context): String = withContext(Dispatchers.IO) {

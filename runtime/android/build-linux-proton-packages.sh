@@ -20,6 +20,17 @@ fi
 
 BUILDX_CONFIG="$out/buildx" docker --host=unix:///var/run/docker.sock build --platform linux/amd64 \
   --progress=plain -t pocket-proton-rootfs:bookworm "$repo/runtime/android/linux-proton-rootfs"
+docker --host=unix:///var/run/docker.sock run --rm --network none \
+  --mount "type=bind,src=$repo/runtime/android/probe-linux-vulkan.py,dst=/tmp/probe.py,readonly" \
+  -e VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+  -e LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu \
+  pocket-proton-rootfs:bookworm python3 /tmp/probe.py
+docker --host=unix:///var/run/docker.sock run --rm \
+  --mount "type=bind,src=$repo/runtime/android/probe-linux-vulkan-32.c,dst=/tmp/probe.c,readonly" \
+  -e VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+  -e LD_LIBRARY_PATH=/usr/lib/i386-linux-gnu \
+  pocket-proton-rootfs:bookworm sh -c \
+  'set -eu; apt-get update -qq; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gcc gcc-multilib qemu-user-static >/tmp/apt.log; gcc -m32 /tmp/probe.c -ldl -o /tmp/probe32; qemu-i386-static -L / /tmp/probe32'
 container_id=$(docker --host=unix:///var/run/docker.sock create --platform linux/amd64 pocket-proton-rootfs:bookworm)
 trap 'docker --host=unix:///var/run/docker.sock rm "$container_id" >/dev/null' EXIT
 docker --host=unix:///var/run/docker.sock export "$container_id" | gzip -1 > "$rootfs"

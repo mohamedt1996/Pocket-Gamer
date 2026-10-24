@@ -3,6 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -46,8 +47,40 @@ def verify_android_runtime(apk):
     print(f"verified Android Wine/FEX runtime: {info.file_size} bytes, SHA-256 {expected}")
 
 
-def main(apk_path, require_android_runtime=False):
+def verify_box32(apk):
+    manifest = json.loads(apk.read("assets/runner/box64-box32-android-arm64-16k.json"))
+    assert manifest["schema"] == 1 and manifest["box32"] is True
+    assert manifest["sourceCommit"] == "420eda69ff51ab5d5a7cbc3dee2e70433be3411d"
+    name = "assets/runner/" + manifest["asset"]
+    assert name == "assets/runner/box64-box32-android-arm64-16k.zst"
+    with tempfile.TemporaryDirectory() as directory:
+        archive = Path(directory, "box32.zst")
+        binary = Path(directory, "box32")
+        with apk.open(name) as source, archive.open("wb") as target:
+            while block := source.read(1024 * 1024):
+                target.write(block)
+        with archive.open("rb") as source:
+            size, digest = sha256(source)
+        assert size > 100_000 and digest == manifest["archiveSha256"]
+        with binary.open("wb") as output:
+            subprocess.run(["zstd", "-dc", str(archive)], stdout=output, check=True)
+        with binary.open("rb") as source:
+            _, digest = sha256(source)
+        assert digest == manifest["binarySha256"]
+        with binary.open("rb") as source:
+            header = source.read(20)
+        assert header[:6] == b"\x7fELF\x02\x01" and header[18:20] == b"\xb7\x00"
+    print(f"verified Android Box64/Box32: {size} compressed bytes, SHA-256 {manifest['archiveSha256']}")
+
+
+def main(apk_path, require_android_runtime=False, native_only=False):
     with zipfile.ZipFile(apk_path) as apk:
+        if native_only:
+            assert "assets/linux-proton/manifest.json" not in apk.namelist()
+            verify_android_runtime(apk)
+            verify_box32(apk)
+            print(f"verified native-only APK: {apk_path}")
+            return
         manifest = json.loads(apk.read("assets/linux-proton/manifest.json"))
         assert manifest["schema"] == 1
         components = manifest["components"]
@@ -68,10 +101,13 @@ def main(apk_path, require_android_runtime=False):
             print(f"verified {kind}: {size} bytes, SHA-256 {digest}")
         if require_android_runtime:
             verify_android_runtime(apk)
+            verify_box32(apk)
     print(f"verified APK: {apk_path}")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (2, 3) or len(sys.argv) == 3 and sys.argv[2] != "--require-android-runtime":
-        raise SystemExit("usage: verify-linux-proton-apk.py APK [--require-android-runtime]")
-    main(Path(sys.argv[1]), len(sys.argv) == 3)
+    if len(sys.argv) not in (2, 3) or len(sys.argv) == 3 and sys.argv[2] not in \
+            ("--require-android-runtime", "--native-only"):
+        raise SystemExit("usage: verify-linux-proton-apk.py APK [--require-android-runtime|--native-only]")
+    main(Path(sys.argv[1]), len(sys.argv) == 3 and sys.argv[2] == "--require-android-runtime",
+         len(sys.argv) == 3 and sys.argv[2] == "--native-only")

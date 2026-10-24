@@ -1,6 +1,6 @@
 # Optional Linux Proton session on Android
 
-This is a separate, opt-in Box64 session for Epic games. It runs a complete
+This is a separate, opt-in Box64/Box32 session for Epic games. It runs a
 x86-64 Linux Proton distribution through an x86-64 Linux Python interpreter;
 the existing Android Wine/FEX session and its prefixes remain separate. The
 app launches the game's original Epic executable and arguments with `proton
@@ -9,8 +9,8 @@ path when the game requires it. It does not alter EAC files or bypass checks.
 
 ## Prepare existing components
 
-Install Box64 from the Epic screen. To create an APK with verified GE-Proton and
-an x86-64 Debian rootfs, run from the repository root:
+Install Box64/Box32 from the Epic screen. To create an APK with verified GE-Proton
+and a multiarch Debian rootfs, run from the repository root:
 
 ```sh
 runtime/android/build-linux-proton-packages.sh
@@ -34,7 +34,11 @@ The release assets remain available after the temporary Actions artifact expires
 The workflow verifies the APK signature, 16 KB native library alignment, and
 archive bytes before publishing.
 
-The APK is self-contained for the included Linux packages. To add the official
+The release also includes a smaller Android Wine/FEX lite APK for devices whose
+package manager rejects the large all-in-one APK. The lite APK includes the
+Android-native runtime and Box64/Box32; import the separate Proton and Debian
+`.tgz` assets through **Settings → Pocket Dock**. The full APK is self-contained
+for the included Linux packages. To add the official
 Proton EAC runtime to a personal APK, supply its archive to the build script
 with `--eac`; for GitHub Actions, see [EAC-SETUP.md](EAC-SETUP.md) for the
 verified archive source settings and redistribution condition. When supplied,
@@ -42,11 +46,10 @@ the EAC archive is included inside the APK and in its release assets.
 
 ## Package requirements
 
-1. **rootfs**: a relocatable x86-64 Linux root filesystem with executable
-   `usr/bin/python3` and glibc (`lib/x86_64-linux-gnu/libc.so.6` or
-   `usr/lib/x86_64-linux-gnu/libc.so.6`). Linux x86-64 support libraries needed
-   by Proton, X11 and Vulkan must also be present. An ARM64 rootfs is not
-   suitable. The importer relocates absolute symlinks inside the rootfs.
+1. **rootfs**: a relocatable x86-64 and i386 Linux root filesystem with
+   `usr/bin/python3`, both glibc architectures, X11 support libraries, and
+   Mesa lavapipe Vulkan ICDs for both bitnesses. The importer relocates
+   absolute symlinks inside the rootfs. An ARM64-only rootfs is not suitable.
 2. **proton**: a complete Linux x86-64 Proton or GE-Proton release archive with
    `proton` and `files/bin/wine`. Do not use a Wine prefix template. Upstream
    distribution: [Valve Proton](https://github.com/ValveSoftware/Proton) or
@@ -97,12 +100,20 @@ Run an X11 server on the tablet that the Pocket Arcade app process can reach,
 and enter its `DISPLAY` in the Epic screen. An external X11 Android app may
 provide this display; its socket or TCP endpoint must be accessible across app
 processes. Then select **Play with Linux Proton** for an installed Epic game.
-The app runs Box64 → x86-64 Python → the Proton script → Proton Wine, in a
+The app runs Box64/Box32 → x86-64 Python → the Proton script → Proton Wine, in a
 foreground service with a Stop action. Each game gets its own
 `Epic/<game>/sessions/proton/compatdata` and `proton.log`; neither is shared
 with the Android Wine prefix. The log is app-private and can contain one-use
 Epic credentials, so redact it before sharing. A separate `status.json` records
 whether the process started and its exit code.
+
+The bundled Mesa lavapipe ICDs provide a **software Vulkan fallback** for both
+Linux architectures. This runs Vulkan on the CPU and is unsuitable as a
+performance solution for Adreno 732. It still needs an X11 server. An
+Adreno-accelerated Linux route requires a compatible Android X11/Vulkan
+presentation wrapper; Box64's Vulkan call wrapper alone cannot create that
+bridge. GE-Proton upstream supports non-Steam launches through umu and its
+Steam runtime, which this experimental direct launch does not include.
 
 The cloud build validates archive handling, environment construction, and APK
 packaging. On-device execution, X11 access, Vulkan presentation, audio/input,

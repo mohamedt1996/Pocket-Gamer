@@ -32,7 +32,11 @@ object LinuxProtonInstaller {
     fun installed(context: Context, component: Component): Boolean {
         val folder = File(LinuxProton.root(context), component.folder)
         return when (component) {
-            Component.ROOTFS -> File(folder, component.marker).isFile
+            Component.ROOTFS -> File(folder, component.marker).isFile &&
+                File(folder, "usr/lib/i386-linux-gnu/libc.so.6").isFile &&
+                File(folder, "lib/ld-linux.so.2").exists() &&
+                File(folder, "usr/share/vulkan/icd.d/lvp_icd.x86_64.json").isFile &&
+                File(folder, "usr/share/vulkan/icd.d/lvp_icd.i686.json").isFile
             Component.PROTON -> File(folder, component.marker).isFile && File(folder, "files/bin/wine").isFile
             Component.EAC -> File(folder, component.marker).isFile ||
                 File(folder, "v2/lib/x86_64-linux-gnu/easyanticheat_x64.so").isFile
@@ -144,6 +148,15 @@ object LinuxProtonInstaller {
                 require(File(candidate, component.marker).isFile) { "Archive is missing ${component.marker}" }
             if (component == Component.PROTON)
                 require(File(candidate, "files/bin/wine").isFile) { "Archive is missing Proton's Wine binary" }
+            if (component == Component.ROOTFS)
+                require(listOf("usr/lib/i386-linux-gnu/libc.so.6",
+                    "lib/ld-linux.so.2",
+                    "usr/lib/x86_64-linux-gnu/libvulkan_lvp.so",
+                    "usr/lib/i386-linux-gnu/libvulkan_lvp.so",
+                    "usr/share/vulkan/icd.d/lvp_icd.x86_64.json",
+                    "usr/share/vulkan/icd.d/lvp_icd.i686.json").all { File(candidate, it).isFile }) {
+                    "Rootfs needs i386 glibc and both Mesa Vulkan ICD manifests"
+                }
             if (component == Component.EAC)
                 require(File(candidate, "v2/lib/x86_64-linux-gnu/easyanticheat.so").isFile ||
                     File(candidate, "v2/lib/x86_64-linux-gnu/easyanticheat_x64.so").isFile) { "Archive is missing the EAC bridge" }
