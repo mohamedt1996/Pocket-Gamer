@@ -26,8 +26,10 @@ storage, separate from Steam's downloaded files. Its `proton.log` and
 Games requiring the Steam client, Steamworks, Steam DRM, or unsupported anti-cheat
 may refuse to start. Pocket Dock does not claim to satisfy those checks. It also
 does not currently run Steam's one-time install scripts or trigger automatic
-Steam Cloud sync for Proton sessions. The Android Wine option is legacy and
-requires an APK containing its separate runtime.
+Steam Cloud sync for Proton sessions. The combined APK workflow also packages
+the Android ARM64EC Proton-Wine/FEX runtime. Choose **Android Wine/FEX** under
+a Steam game's **Start with** setting to try that path with the tablet's system
+Vulkan driver. Earlier alpha.6 APKs do not contain this Android runtime.
 The bundled Proton Wine runtime is x86-64 Linux software; it is not the removed
 Android Wine runtime. The Windows desktop button starts Proton's `explorer.exe`
 and needs Pocket Dock's packages, Box64, and an active X11 display.

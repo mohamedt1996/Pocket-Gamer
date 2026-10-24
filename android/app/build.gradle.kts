@@ -33,7 +33,7 @@ android {
     }
     buildFeatures { compose = true; buildConfig = true }
     // These payloads are already gzip-compressed. Recompressing them wastes heap and CPU.
-    androidResources { noCompress += "tgz" }
+    androidResources { noCompress += listOf("tgz", "zip") }
     packaging { resources { excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1", "META-INF/*.kotlin_module") } }
     testOptions { unitTests.isReturnDefaultValues = true }
 }

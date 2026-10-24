@@ -297,9 +297,9 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
         }
         if (installed != null && cloudOn && graph.account.signedIn) CloudSection(graph, appID, cloudStates[appID])
         if (installed != null) {
-            SettingsSection("Start with", footer = if (config.startWith == "dock") "Pocket Dock runs the downloaded Windows game with Linux Proton. An X11 display is required. Games that require the Steam client or DRM may refuse to start."
-                else "Legacy Android Wine requires a separate APK with its Windows runtime.") {
-                Choice(listOf("dock" to "Pocket Dock", "game" to "Legacy Wine"), config.startWith) { v -> graph.steamConfigs.update(appID) { it.copy(startWith = v) } }
+            SettingsSection("Start with", footer = if (config.startWith == "dock") "Pocket Dock runs Linux Proton through Box64. An X11 display and a working Vulkan bridge are required. On Adreno 732, try Android Wine/FEX with the system driver first."
+                else "Android Wine/FEX uses the tablet's system Vulkan driver. This option needs an APK with the Android runtime bundled.") {
+                Choice(listOf("dock" to "Pocket Dock", "game" to "Android Wine/FEX"), config.startWith) { v -> graph.steamConfigs.update(appID) { it.copy(startWith = v) } }
                 if (config.startWith == "game" || config.startWith == "dock") {
                     val root = File(graph.prefix.drive, "${installed.library}/common/${installed.installDir}")
                     val current = DirectStart.program(config.program, game?.launches, root)

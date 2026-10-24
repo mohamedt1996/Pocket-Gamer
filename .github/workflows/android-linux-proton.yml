@@ -1,4 +1,4 @@
-name: Android Linux Proton APK
+name: Android Wine/FEX and Linux Proton APK
 
 on:
   push:
@@ -15,11 +15,81 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  android_components:
+    name: Android ARM64EC component - ${{ matrix.component }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [wine, fex, graphics, addons]
     steps:
       - uses: actions/checkout@v4
+      - name: Compute pinned source key
+        id: source_key
+        run: echo "value=$(python3 runtime/android/component-key.py '${{ matrix.component }}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: android-ccache-${{ matrix.component }}-${{ steps.source_key.outputs.value }}
+          restore-keys: android-ccache-${{ matrix.component }}-
+      - uses: actions/cache@v4
+        id: component
+        with:
+          path: .android-out/${{ matrix.component }}
+          key: android-native-v2-${{ matrix.component }}-${{ steps.source_key.outputs.value }}
+      - name: Install native build tools
+        if: steps.component.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git curl unzip flex bison gettext autoconf automake libtool pkg-config ninja-build cmake meson glslang-tools mingw-w64 gcc-multilib g++-multilib libwayland-bin libfreetype6-dev libpng-dev zlib1g-dev ccache python3-ply
+      - uses: actions/cache@v4
+        if: steps.component.outputs.cache-hit != 'true'
+        with:
+          path: |-
+            ~/toolchains
+            ~/Android/Sdk/ndk/27.3.13750724
+            ~/termuxfs/aarch64
+          key: android-tools-bylaws20250920-ndk27d-termux-official-v1-${{ matrix.component }}
+      - name: Set up pinned toolchains
+        if: steps.component.outputs.cache-hit != 'true'
+        run: bash runtime/android/setup-tools.sh "${{ matrix.component }}"
+      - name: Build Android component
+        if: steps.component.outputs.cache-hit != 'true'
+        run: bash "runtime/android/build-${{ matrix.component }}.sh"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Android-component-${{ matrix.component }}
+          path: .android-out/${{ matrix.component }}
+          if-no-files-found: error
+          include-hidden-files: true
+
+  build:
+    needs: android_components
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-component-wine
+          path: .android-out/wine
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-component-fex
+          path: .android-out/fex
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-component-graphics
+          path: .android-out/graphics
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-component-addons
+          path: .android-out/addons
+      - name: Package Android Wine/FEX and both Windows architectures
+        run: |
+          sudo apt-get install -y -qq patchelf
+          python3 runtime/android/package-runtime.py
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -68,7 +138,7 @@ jobs:
           set -euo pipefail
           apk=android/app/build/outputs/apk/debug/app-debug.apk
           python3 runtime/android/check-apk.py "$apk"
-          python3 runtime/android/verify-linux-proton-apk.py "$apk"
+          python3 runtime/android/verify-linux-proton-apk.py "$apk" --require-android-runtime
           apksigner verify --verbose "$apk"
           zipalign -c -v 4 "$apk" >/dev/null
       - name: Stage downloadable files and checksums
@@ -88,11 +158,16 @@ jobs:
           fi
           cp android/app/src/main/assets/linux-proton/manifest.json \
             release-assets/linux-proton-manifest.json
+          cp android/app/src/main/assets/madeira-runtime.zip \
+            release-assets/PocketArcade-Android-Wine-FEX-arm64ec.zip
+          cp android/app/src/main/assets/madeira-runtime.sha256 \
+            release-assets/PocketArcade-Android-Wine-FEX-arm64ec.sha256
           cp android/app/src/main/assets/runner/box64-android-arm64-16k.zst \
             release-assets/box64-android-arm64-16k.zst
           cp android/app/src/main/assets/runner/BOX64-LICENSE.txt release-assets/BOX64-LICENSE.txt
           cp android/LINUX-PROTON.md release-assets/LINUX-PROTON.md
           cp android/POCKET-DOCK.md release-assets/POCKET-DOCK.md
+          cp android/MI-PAD-7-RUNTIME.md release-assets/MI-PAD-7-RUNTIME.md
           cp android/EAC-SETUP.md release-assets/EAC-SETUP.md
           (cd release-assets && sha256sum -- * > SHA256SUMS.txt)
           for f in release-assets/*; do
@@ -145,14 +220,14 @@ jobs:
             eac_note="The official Proton EasyAntiCheat Runtime is a separate Steam tool and is not in this APK. Sign in to Steam in the app and use **Install EAC runtime from Steam** in the Epic screen. See EAC-SETUP.md for an import fallback."
           fi
           cat > release-notes.md <<EOF
-          Pocket Arcade Android Linux Proton build from commit ${GITHUB_SHA}.
+          Pocket Arcade combined Android Wine/FEX and Linux Proton build from commit ${GITHUB_SHA}.
 
-          Install \`PocketArcade-Android-Linux-Proton-arm64-debug.apk\` on an ARM64 Android tablet. The APK contains Box64, GE-Proton 11-11 and the x86-64 Debian rootfs. For Steam games, open **Settings → Pocket Dock**, install the included Linux packages and Box64, and configure an X11 display. See \`POCKET-DOCK.md\`. The separate archives, manifest, Box64 file, license and checksums are provided as release assets for inspection and manual staging.
+          Install \`PocketArcade-Android-Linux-Proton-arm64-debug.apk\` on an ARM64 Android tablet. The APK contains the Android ARM64EC Proton-Wine/FEX runtime (x86 and x64 Windows modules), Box64, GE-Proton 11-11, and the x86-64 Debian rootfs. Select **Android Wine/FEX** for the native Android path. **Pocket Dock** remains an experimental Linux path requiring a separate X11 display and graphics bridge. The separate archives and checksums are provided for inspection.
 
           ${eac_note} EAC support also depends on the game's publisher. Proton execution and Rocket League matchmaking have not been verified on the Mi Pad 7.
 
           This APK is debug-signed and experimental. See \`LINUX-PROTON.md\` for setup and limitations.
           EOF
           gh release create "$tag" release-assets/* --repo "$GH_REPO" \
-            --target "$GITHUB_SHA" --title "Pocket Arcade Android Proton $tag" \
+            --target "$GITHUB_SHA" --title "Pocket Arcade Android Wine/FEX + Proton $tag" \
             --notes-file release-notes.md --prerelease

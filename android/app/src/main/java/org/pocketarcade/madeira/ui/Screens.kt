@@ -335,7 +335,7 @@ fun SettingsScreen(graph: AppGraph, nav: Navigator) {
                 SettingsRow("Sign out", tint = colors.red) { confirmSignOut = true }
             } else SettingsRow("Sign in to Steam", icon = Icons.AutoMirrored.Filled.Login, tint = colors.accent) { nav.push(Screen.SignIn) }
             RowDivider()
-            SettingsRow("Pocket Dock", if (org.pocketarcade.madeira.epic.LinuxProton.staged(context, false)) "Ready" else "Set up Proton", chevron = true) { nav.push(Screen.Dock) }
+            SettingsRow("Pocket Dock", if (org.pocketarcade.madeira.epic.LinuxProton.staged(context, false)) "Linux packages staged" else "Set up Proton", chevron = true) { nav.push(Screen.Dock) }
         }
         SettingsSection("Steam Cloud", footer = "Saves sync before a game starts and after it ends. Replaced copies are kept in the app's Steam Cloud Backups folder.") {
             ToggleRow("Steam Cloud", cloud) { s.setSteamCloud(it) }
@@ -426,10 +426,12 @@ private fun PocketDockSetup(graph: AppGraph) {
     var display by rememberSaveable { mutableStateOf(org.pocketarcade.madeira.model.PocketDock.display(context)) }
     var desktopStatus by remember { mutableStateOf<String?>(null) }
     SettingsSection("Linux Proton") {
-        SettingsRow("Pocket Dock runtime", if (ready) "Ready" else "Needs setup")
+        SettingsRow("Pocket Dock Linux packages", if (ready) "Staged; launch unverified" else "Needs setup")
         SettingsRow("x86-64 Linux rootfs", if (rootfsReady) "Installed" else "Missing")
         SettingsRow("Proton Wine runtime", if (protonReady) "Installed" else "Missing")
         SettingsRow("Box64", if (box64) "Installed" else "Missing")
+        SettingsRow("Android Wine/FEX runtime", if (org.pocketarcade.madeira.PortRuntime(context).bundled())
+            "Included in APK" else "Not included in this APK")
         if (packages.isNotEmpty()) SettingsRow(
             if (rootfsReady && protonReady) "Repair included Linux packages" else "Install included Linux packages",
             "Proton and x86-64 Linux rootfs", icon = Icons.Filled.FileDownload, tint = colors.accent) {
