@@ -45,7 +45,7 @@ jobs:
 
   release:
     needs: install_smoke
-    if: always() && (needs.install_smoke.result == 'success' || github.ref_name == 'android-publish-v0.1.0-alpha.10-r2')
+    if: always() && (needs.install_smoke.result == 'success' || startsWith(github.ref_name, 'android-publish-v0.1.0-alpha.10-r'))
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -84,18 +84,26 @@ jobs:
 
           Pocket Dock's Android Box32 and an accelerated Linux Vulkan bridge remain unavailable. Rocket League and EAC acceptance have not been verified on the Mi Pad 7.
           EOF
-          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
-            echo 'A release exists; uploading any missing assets' > "$RUNNER_TEMP/publish.log"
+          : > "$RUNNER_TEMP/publish.log"
+          if ! gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
             set +e
-            gh release upload "$tag" release-assets/* --repo "$GH_REPO" --clobber 2>&1 | tee -a "$RUNNER_TEMP/publish.log"
-          else
-            echo 'Creating the release and uploading assets' > "$RUNNER_TEMP/publish.log"
-            set +e
-            gh release create "$tag" release-assets/* --repo "$GH_REPO" \
+            gh release create "$tag" --repo "$GH_REPO" \
               --target 9af2423 --title "Pocket Arcade Android Wine/FEX + Proton $tag" \
               --notes-file release-notes.md --prerelease 2>&1 | tee -a "$RUNNER_TEMP/publish.log"
+            result=${PIPESTATUS[0]}
+            set -e
+            if [[ "$result" -ne 0 ]]; then
+              tail -n 8 "$RUNNER_TEMP/publish.log" | while IFS= read -r line; do echo "::error title=Release creation failed::$line"; done
+              exit "$result"
+            fi
           fi
+          set +e
+          gh release upload "$tag" release-assets/* --repo "$GH_REPO" --clobber 2>&1 | tee -a "$RUNNER_TEMP/publish.log"
           result=${PIPESTATUS[0]}
+          set -e
+          if [[ "$result" -ne 0 ]]; then
+            tail -n 8 "$RUNNER_TEMP/publish.log" | while IFS= read -r line; do echo "::error title=Release upload failed::$line"; done
+          fi
           {
             echo '## Release publication result'
             echo "Exit code: $result"
