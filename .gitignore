@@ -5,4 +5,5 @@ android/.kotlin/
 android/app/.cxx/
 android/app/build/
 android/app/src/main/assets/linux-proton/
+android/app/src/main/assets/runner/wowbox64-0.4.2.tzst
 .android-out/linux-proton/

@@ -56,13 +56,16 @@ object RuntimeComponents {
         val binary = box64File(context)
         require(binary.isFile && binary.canExecute()) { "Install Box64 before using Linux Proton" }
         val contents = binary.readBytes()
-        require(sha(contents) == box64Sha(hostPageSize())) { "Repair the Box64 component before using Linux Proton" }
+        val expected = if (hostPageSize() > 4096) setOf(BOX64_16K_BINARY_SHA)
+            else setOf(BOX64_16K_BINARY_SHA, BOX64_BINARY_SHA)
+        require(sha(contents) in expected) { "Repair the Box64 component before using Linux Proton" }
         validateBox64(contents, hostPageSize())
         return binary
     }
     fun sha(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     suspend fun install(context: Context, http: EpicHttp) = withContext(Dispatchers.IO) {
-        val compressed = http.get(Request.Builder().url(SOURCE).build(), 4 * 1024 * 1024)
+        val compressed = runCatching { context.assets.open("runner/wowbox64-0.4.2.tzst").use { it.readBytes() } }
+            .getOrElse { http.get(Request.Builder().url(SOURCE).build(), 4 * 1024 * 1024) }
         require(sha(compressed) == ARCHIVE_SHA) { "WoWBox64 archive checksum failed" }
         val archive = Zstd.decompress(compressed, 0, compressed.size, 8 * 1024 * 1024)
             ?: error("WoWBox64 archive could not be decoded")
@@ -79,11 +82,11 @@ object RuntimeComponents {
             return@withContext
         }
         val pageSize = hostPageSize()
-        val binary = if (pageSize > 4096) {
+        val bundled = runCatching { context.assets.open(BOX64_16K_ASSET).use { it.readBytes() } }.getOrNull()
+        val binary = if (bundled != null) {
             require(pageSize <= 16384) { "No Box64 build supports this Android page size" }
-            val compressed = context.assets.open(BOX64_16K_ASSET).use { it.readBytes() }
-            require(sha(compressed) == BOX64_16K_ARCHIVE_SHA) { "Box64 16 KB asset checksum failed" }
-            Zstd.decompress(compressed, 0, compressed.size, 32 * 1024 * 1024)
+            require(sha(bundled) == BOX64_16K_ARCHIVE_SHA) { "Box64 16 KB asset checksum failed" }
+            Zstd.decompress(bundled, 0, bundled.size, 32 * 1024 * 1024)
                 ?: error("Box64 16 KB asset could not be decoded")
         } else {
             val compressed = http.get(Request.Builder().url(BOX64_SOURCE).build(), 5 * 1024 * 1024)
@@ -92,7 +95,7 @@ object RuntimeComponents {
                 ?: error("Box64 archive could not be decoded")
             tarEntry(archive, "./usr/bin/box64")
         }
-        require(sha(binary) == box64Sha(pageSize)) { "Box64 binary checksum failed" }
+        require(sha(binary) == if (bundled != null) BOX64_16K_BINARY_SHA else box64Sha(pageSize)) { "Box64 binary checksum failed" }
         validateBox64(binary, pageSize)
         val dest = box64File(context).also { it.parentFile!!.mkdirs() }
         val temp = File(dest.parentFile, dest.name + ".tmp")

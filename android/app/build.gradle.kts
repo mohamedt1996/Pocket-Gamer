@@ -4,6 +4,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+val releaseKeystore = System.getenv("POCKET_ARCADE_KEYSTORE_FILE")
+val releaseStorePassword = System.getenv("POCKET_ARCADE_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("POCKET_ARCADE_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("POCKET_ARCADE_KEY_PASSWORD")
 android {
     namespace = "org.pocketarcade.madeira"
     compileSdk = 35
@@ -13,8 +17,8 @@ android {
         manifestPlaceholders["appLabel"] = "Pocket Arcade"
         minSdk = 28
         targetSdk = 28 // Prototype only: review modern Android policies before distribution.
-        versionCode = 4
-        versionName = "0.4.0-alpha"
+        versionCode = 5
+        versionName = "0.5.0-alpha"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { cppFlags += "-std=c++17" } }
     }
@@ -32,6 +36,22 @@ android {
         )
     }
     buildFeatures { compose = true; buildConfig = true }
+    signingConfigs {
+        create("production") {
+            if (listOf(releaseKeystore, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }) {
+                storeFile = file(releaseKeystore!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("production")
+        }
+    }
     // These payloads are already gzip-compressed. Recompressing them wastes heap and CPU.
     androidResources { noCompress += listOf("tgz", "zip") }
     packaging { resources { excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1", "META-INF/*.kotlin_module") } }

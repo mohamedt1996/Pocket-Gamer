@@ -7,42 +7,39 @@ app launches the game's original Epic executable and arguments with `proton
 run`, sets the Steam compatibility paths, and supplies the official EAC runtime
 path when the game requires it. It does not alter EAC files or bypass checks.
 
-## Prepare existing components
+## Signed all-in-one release
 
-Install Box64 from the Epic screen. To create an APK with verified GE-Proton
-and a multiarch Debian rootfs, run from the repository root:
+The production workflow builds one non-debug `assembleRelease` APK. It bundles
+Android ARM64EC Wine/FEX and WoWBox64, GE-Proton, the multiarch Debian rootfs,
+Box64, and the official Proton EasyAntiCheat Runtime. The Linux packages are
+extracted to app-private storage by **Install included Linux packages** in
+**Settings → Pocket Dock**. Plan for several gigabytes of free storage.
 
-```sh
-runtime/android/build-linux-proton-packages.sh
-cd android
-gradle --no-daemon --max-workers=2 -Dorg.gradle.jvmargs='-Xmx12g -Dfile.encoding=UTF-8' assembleDebug
-```
+A tag matching `android-proton-v*` starts the workflow. It will stop before
+building unless GitHub Actions has these repository settings:
 
-This produces `android/app/build/outputs/apk/debug/app-debug.apk`. The larger
-Gradle heap is needed while packaging these assets. Tap **Install included Linux packages** to extract
-them into app-private storage. The packages add roughly 840 MB to the APK and
-need several gigabytes free while extracting. The smaller APK can still
-use the three **Import .tar.gz** buttons to select existing packages.
+- Secrets: `POCKET_ARCADE_KEYSTORE_BASE64`, `POCKET_ARCADE_KEYSTORE_PASSWORD`,
+  `POCKET_ARCADE_KEY_ALIAS`, `POCKET_ARCADE_KEY_PASSWORD`, and
+  `PROTON_EAC_RUNTIME_URL`.
+- Variables: `POCKET_ARCADE_SIGNING_CERT_SHA256`,
+  `PROTON_EAC_RUNTIME_SHA256`, and `PROTON_EAC_REDISTRIBUTION_APPROVED=true`.
 
-GitHub Actions runs the same build in **Android Linux Proton APK** on pushes to
-`main`, and the downloadable **PocketArcade-Android-Linux-Proton** build artifact
-contains the APK, the separate Proton and rootfs archives, Box64, setup notes,
-the manifest, and `SHA256SUMS.txt`. Push an `android-proton-v*` tag to build and
-publish those files as a pre-release. Alternatively, from the Actions page run
-this workflow on `main` with **publish_release** enabled.
-The release assets remain available after the temporary Actions artifact expires.
-The workflow verifies the APK signature, 16 KB native library alignment, and
-archive bytes before publishing.
+The keystore must be a persistent private Android signing key kept outside Git.
+`POCKET_ARCADE_SIGNING_CERT_SHA256` is the SHA-256 certificate digest reported by
+`keytool -list -v -keystore /path/to/release.keystore -alias YOUR_ALIAS`,
+with the separating colons removed.
+`POCKET_ARCADE_KEYSTORE_BASE64` is the base64 encoding of the keystore file.
+The workflow checks the signed APK's certificate against that digest. Keep the
+key and passwords backed up; later updates must use the same certificate.
+See [EAC-SETUP.md](EAC-SETUP.md) for the official EAC archive and distribution
+requirement. The workflow refuses to publish without it. A full install test
+runs through Android's package manager before publication.
 
-The release also includes a smaller Android Wine/FEX lite APK for devices whose
-package manager rejects the large all-in-one APK. The lite APK includes the
-Android-native runtime and Box64; import the separate Proton and Debian
-`.tgz` assets through **Settings → Pocket Dock**. The full APK is self-contained
-for the included Linux packages. To add the official
-Proton EAC runtime to a personal APK, supply its archive to the build script
-with `--eac`; for GitHub Actions, see [EAC-SETUP.md](EAC-SETUP.md) for the
-verified archive source settings and redistribution condition. When supplied,
-the EAC archive is included inside the APK and in its release assets.
+Android Box32 is still unavailable, so Linux i386 processes cannot run through
+Pocket Dock despite the included i386 libraries. The Android-native Wine/FEX
+route includes Windows x86 and x64 modules. The Linux Vulkan path uses CPU
+rendering; neither Rocket League nor EAC acceptance has been verified on the
+Mi Pad 7.
 
 ## Package requirements
 
@@ -59,11 +56,9 @@ the EAC archive is included inside the APK and in its release assets.
    or `easyanticheat_x64.so`. The app requires this before attempting an EAC
    game. The game publisher must also support EAC on Proton.
 
-The public bundled variant includes **rootfs and Proton**, but not the
-proprietary EAC runtime. Follow [EAC-SETUP.md](EAC-SETUP.md) to import it from
-Steam or Heroic, or supply an official archive to the build script with
-`--eac` when its distribution terms allow that use. The app never treats
-Proton itself as an EAC runtime.
+The signed all-in-one workflow requires an official EAC archive and verifies
+its x86-64 bridge before packaging. Proton itself is never treated as the EAC
+runtime. Publication also requires redistribution approval.
 
 The pinned Proton archive is
 [GE-Proton11-11-x86_64](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-11),

@@ -47,6 +47,14 @@ def verify_android_runtime(apk):
     print(f"verified Android Wine/FEX runtime: {info.file_size} bytes, SHA-256 {expected}")
 
 
+def verify_wowbox(apk):
+    name = "assets/runner/wowbox64-0.4.2.tzst"
+    with apk.open(name) as source:
+        size, digest = sha256(source)
+    assert size > 100_000 and digest == "90e6fefea2c9189c2556d6e0661ec4325dfc41fa82413a44a2485ae223e38efd"
+    print(f"verified bundled WoWBox64: {size} bytes")
+
+
 def verify_box32(apk):
     manifest = json.loads(apk.read("assets/runner/box64-box32-android-arm64-16k.json"))
     assert manifest["schema"] == 1 and manifest["box32"] is True
@@ -73,7 +81,7 @@ def verify_box32(apk):
     print(f"verified Android Box64/Box32: {size} compressed bytes, SHA-256 {manifest['archiveSha256']}")
 
 
-def main(apk_path, require_android_runtime=False, native_only=False):
+def main(apk_path, require_android_runtime=False, native_only=False, require_eac=False):
     with zipfile.ZipFile(apk_path) as apk:
         if native_only:
             assert "assets/linux-proton/manifest.json" not in apk.namelist()
@@ -86,6 +94,8 @@ def main(apk_path, require_android_runtime=False, native_only=False):
         assert manifest["schema"] == 1
         components = manifest["components"]
         assert {"proton", "rootfs"} <= components.keys()
+        if require_eac:
+            assert "eac_runtime" in components, "All-in-one APK is missing official Proton EAC runtime"
         assert apk.getinfo("assets/runner/box64-android-arm64-16k.zst").file_size > 100_000
         for kind, entry in components.items():
             assert kind in ("proton", "rootfs", "eac_runtime")
@@ -102,6 +112,8 @@ def main(apk_path, require_android_runtime=False, native_only=False):
             print(f"verified {kind}: {size} bytes, SHA-256 {digest}")
         if require_android_runtime:
             verify_android_runtime(apk)
+            if require_eac:
+                verify_wowbox(apk)
             if "assets/runner/box64-box32-android-arm64-16k.json" in apk.namelist():
                 verify_box32(apk)
     print(f"verified APK: {apk_path}")
@@ -109,7 +121,8 @@ def main(apk_path, require_android_runtime=False, native_only=False):
 
 if __name__ == "__main__":
     if len(sys.argv) not in (2, 3) or len(sys.argv) == 3 and sys.argv[2] not in \
-            ("--require-android-runtime", "--native-only"):
-        raise SystemExit("usage: verify-linux-proton-apk.py APK [--require-android-runtime|--native-only]")
-    main(Path(sys.argv[1]), len(sys.argv) == 3 and sys.argv[2] == "--require-android-runtime",
-         len(sys.argv) == 3 and sys.argv[2] == "--native-only")
+            ("--require-android-runtime", "--native-only", "--require-eac-and-android"):
+        raise SystemExit("usage: verify-linux-proton-apk.py APK [--require-android-runtime|--native-only|--require-eac-and-android]")
+    option = sys.argv[2] if len(sys.argv) == 3 else ""
+    main(Path(sys.argv[1]), option in ("--require-android-runtime", "--require-eac-and-android"),
+         option == "--native-only", option == "--require-eac-and-android")

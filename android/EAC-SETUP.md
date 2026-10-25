@@ -2,8 +2,9 @@
 
 Pocket Arcade cannot treat Proton or the game's Windows EAC files as the
 **Proton EasyAntiCheat Runtime**. It needs the official x86-64 Linux runtime
-that Steam distributes as a separate tool. The public APK currently includes
-Box64, Proton and the Linux rootfs, but no EAC runtime.
+that Steam distributes as a separate tool. The signed all-in-one workflow
+requires an approved official archive before it publishes an APK. Earlier
+alpha APKs did not bundle that runtime.
 
 In **Epic Games → Linux Proton research**, sign in to Steam and tap **Install
 EAC runtime from Steam**. Pocket Arcade requests Steam tool app `1826330` from
@@ -29,14 +30,12 @@ If Steam's direct download is unavailable, import the official runtime:
    Games → Linux Proton research**, tap **Import EAC runtime .tar.gz** and
    select the file. Then use **Play with Linux Proton** for the installed game.
 
-To make a single APK for your own use, pass that same archive to
-`runtime/android/build-linux-proton-packages.sh --eac /path/to/proton-eac-runtime.tar.gz`
-before building the APK. The app will verify and extract it with the other
-included Linux packages. An automated GitHub Actions build can do the same if
-the repository owner sets `PROTON_EAC_RUNTIME_URL` (Actions secret pointing to
-an official archive they are authorized to distribute) and
-`PROTON_EAC_RUNTIME_SHA256` (Actions variable with its SHA-256). The workflow
-rejects an archive whose checksum or x86-64 EAC bridge is wrong.
+The release workflow requires `PROTON_EAC_RUNTIME_URL` as a GitHub Actions
+secret, `PROTON_EAC_RUNTIME_SHA256` as a repository variable, and
+`PROTON_EAC_REDISTRIBUTION_APPROVED=true` as a repository variable. The URL
+must provide an official archive the repository owner is authorized to
+redistribute. The workflow verifies its checksum and x86-64 EAC bridge, embeds
+it in the sole APK, and fails rather than shipping an incomplete release.
 
 An anonymous SteamCMD install of Valve's tool app `1826330` was tested on a
 hosted Linux runner and returned `Failed to install app '1826330' (Missing

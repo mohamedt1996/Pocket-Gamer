@@ -5,12 +5,10 @@ It uses the app's signed-in Steam session to list and download your library,
 then runs a selected game executable with the included Linux Proton packages
 and Box64. It does not launch Valve's Windows client or `dockhost.exe`.
 
-1. Install the Android Linux Proton APK from this release and sign in to Steam.
-   If the tablet's package manager rejects the large APK, use the smaller
-   Android Wine/FEX lite APK from the same release. It includes the native
-   runtime and Box64; import the separate GE-Proton and Debian `.tgz`
-   assets from **Settings → Pocket Dock**. Check downloaded files against
-   `SHA256SUMS.txt` before installing or importing.
+1. Install `PocketArcade-Android-arm64-release.apk` from the signed all-in-one
+   release and sign in to Steam. It includes the runtime archives in the APK;
+   no separate archive download is needed. Check the APK against
+   `SHA256SUMS.txt` before installing.
 2. Open **Settings → Pocket Dock**. Tap **Install included Linux packages** and
    **Install Box64**. Install and start an X11 display app on the tablet, then
    enter its `DISPLAY` value (usually `:0`) and tap **Save display**.
