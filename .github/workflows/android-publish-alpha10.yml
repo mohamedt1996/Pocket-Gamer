@@ -1,0 +1,91 @@
+name: Publish verified Android alpha.10 APK
+
+on:
+  push:
+    tags: ['android-publish-v0.1.0-alpha.10']
+
+permissions:
+  contents: read
+
+jobs:
+  install_smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketArcade-Android-all-in-one
+          path: apk
+          run-id: 40178263408
+          github-token: ${{ github.token }}
+      - name: Check downloaded release artifact
+        run: |
+          set -euo pipefail
+          (cd apk && sha256sum -c SHA256SUMS.txt)
+          unzip -tq apk/PocketArcade-Android-arm64-release.apk >/dev/null
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -partition-size 8192
+          script: |
+            adb install apk/PocketArcade-Android-arm64-release.apk
+            adb shell pm path org.pocketarcade.madeira
+
+  release:
+    needs: install_smoke
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketArcade-Android-all-in-one
+          path: release-assets
+          run-id: 40178263408
+          github-token: ${{ github.token }}
+      - name: Publish signed APK from successful build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release-assets && sha256sum -c SHA256SUMS.txt)
+          tag=android-proton-v0.1.0-alpha.10
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release $tag already exists" >&2
+            exit 1
+          fi
+          if grep -q '^EAC bundled: true$' release-assets/PACKAGE-STATUS.txt; then
+            eac_note='The official Proton EasyAntiCheat Runtime is bundled. Game publisher support and Mi Pad 7 acceptance remain unverified.'
+          else
+            eac_note='The official Proton EasyAntiCheat Runtime is not bundled. Sign in to Steam in the app and install the separate Steam EAC tool.'
+          fi
+          if grep -q '^Signing: one-time$' release-assets/PACKAGE-STATUS.txt; then
+            signing_note='This non-debug APK uses a one-time signing key. Future versions cannot update it in place; back up app data before uninstalling.'
+          else
+            signing_note='This non-debug APK uses the configured persistent signing key.'
+          fi
+          cat > release-notes.md <<EOF
+          Pocket Arcade Android release APK built and verified from commit 9af2423.
+
+          Download \`PocketArcade-Android-arm64-release.apk\` directly. It includes Android ARM64EC Wine/FEX with Windows x86/x64 modules, GE-Proton, a multiarch Debian rootfs, Box64 and WoWBox64. Compare its SHA-256 with \`SHA256SUMS.txt\` before installation. See \`PACKAGE-STATUS.txt\` for the signing certificate and EAC contents.
+
+          $eac_note $signing_note
+
+          Pocket Dock's Android Box32 and an accelerated Linux Vulkan bridge remain unavailable. Rocket League and EAC acceptance have not been verified on the Mi Pad 7.
+          EOF
+          gh release create "$tag" release-assets/* --repo "$GH_REPO" \
+            --target 9af2423 --title "Pocket Arcade Android Wine/FEX + Proton $tag" \
+            --notes-file release-notes.md --prerelease

@@ -248,6 +248,7 @@ jobs:
   install_smoke:
     name: Install signed all-in-one APK in Android package manager
     needs: build
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -274,6 +275,7 @@ jobs:
 
   release:
     needs: [build, install_smoke]
+    if: always() && needs.build.result == 'success' && needs.install_smoke.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
