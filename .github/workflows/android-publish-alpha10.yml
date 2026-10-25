@@ -63,6 +63,17 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          raw_length=${#GH_TOKEN}
+          GH_TOKEN=$(printf '%s' "$GH_TOKEN" | tr -d '[:space:]')
+          export GH_TOKEN
+          case "$GH_TOKEN" in
+            github_pat_*) token_type='fine-grained PAT' ;;
+            ghp_*) token_type='classic PAT' ;;
+            ghs_*) token_type='GitHub Actions token' ;;
+            *) token_type='unrecognized' ;;
+          esac
+          echo "::notice title=Release authentication::Token type: $token_type; length before/after whitespace removal: $raw_length/${#GH_TOKEN}"
+          [[ "$token_type" != unrecognized ]] || { echo '::error::Release token does not have a GitHub token prefix'; exit 1; }
           (cd release-assets && sha256sum -c SHA256SUMS.txt)
           tag=android-proton-v0.1.0-alpha.10
           if grep -q '^EAC bundled: true$' release-assets/PACKAGE-STATUS.txt; then
