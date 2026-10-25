@@ -9,6 +9,8 @@ permissions:
 
 jobs:
   android_components:
+    # alpha.10 changes only Gradle/release automation; use alpha.9's identical native build.
+    if: github.ref_name != 'android-proton-v0.1.0-alpha.10'
     name: Android ARM64EC component - ${{ matrix.component }}
     runs-on: ubuntu-24.04
     timeout-minutes: 350
@@ -59,26 +61,40 @@ jobs:
 
   build:
     needs: android_components
+    if: always() && (needs.android_components.result == 'success' || github.ref_name == 'android-proton-v0.1.0-alpha.10')
     runs-on: ubuntu-24.04
     timeout-minutes: 150
+    permissions:
+      contents: read
+      actions: read
+    env:
+      COMPONENTS_RUN_ID: ${{ github.ref_name == 'android-proton-v0.1.0-alpha.10' && '40175097066' || github.run_id }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: Android-component-wine
           path: .android-out/wine
+          run-id: ${{ env.COMPONENTS_RUN_ID }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           name: Android-component-fex
           path: .android-out/fex
+          run-id: ${{ env.COMPONENTS_RUN_ID }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           name: Android-component-graphics
           path: .android-out/graphics
+          run-id: ${{ env.COMPONENTS_RUN_ID }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           name: Android-component-addons
           path: .android-out/addons
+          run-id: ${{ env.COMPONENTS_RUN_ID }}
+          github-token: ${{ github.token }}
       - name: Package Android Wine/FEX and both Windows architectures
         run: |
           sudo apt-get install -y -qq patchelf
@@ -175,7 +191,20 @@ jobs:
         run: |
           gradle --no-daemon --max-workers=2 \
             -Dorg.gradle.jvmargs='-Xmx12g -Dfile.encoding=UTF-8' \
-            --console=plain testReleaseUnitTest assembleRelease
+            --console=plain testReleaseUnitTest assembleRelease \
+            2>&1 | tee "$RUNNER_TEMP/android-release-gradle.log"
+      - name: Show release build error in job summary
+        if: failure()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/android-release-gradle.log" ]]; then
+            {
+              echo '## Android release Gradle failure'
+              echo '```text'
+              tail -n 120 "$RUNNER_TEMP/android-release-gradle.log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Verify APK, native libraries and included archives
         shell: bash
         run: |

@@ -36,6 +36,11 @@ android {
         )
     }
     buildFeatures { compose = true; buildConfig = true }
+    lint {
+        // This alpha is distributed directly as an APK. Raising targetSdk needs
+        // a separate scoped-storage and notification-permission migration.
+        disable += "ExpiredTargetSdkVersion"
+    }
     signingConfigs {
         create("production") {
             if (listOf(releaseKeystore, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }) {
