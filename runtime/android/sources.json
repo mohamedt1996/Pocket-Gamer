@@ -15,18 +15,6 @@
     "url": "https://github.com/doitsujin/dxvk.git",
     "commit": "ef3ef8712ecfd619775662ee8d2778bf7db89af4"
   },
-  "madeira-wine": {
-    "url": "https://github.com/willfaust/wine.git",
-    "commit": "9129e9684daaeae70da9435e7c6060e59392634e"
-  },
-  "directaudio": {
-    "url": "https://github.com/The412Banner/directaudio.git",
-    "commit": "2101085596ffe4911f7686012a97585eacbde9d0"
-  },
-  "madeira": {
-    "url": "https://github.com/willfaust/Madeira.git",
-    "commit": "279fd0f83170425db002fe25d6bd62f6355f497d"
-  },
   "madeira-dock": {
     "url": "https://github.com/willfaust/madeira-dock.git",
     "commit": "72558e416a390f3669457930f09a389e54f49556"

@@ -1,0 +1,313 @@
+name: Pocket Arcade all-in-one release APK
+
+on:
+  push:
+    tags: ['android-proton-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  android_components:
+    # alpha.10 changes only Gradle/release automation; use alpha.9's identical native build.
+    if: github.ref_name != 'android-proton-v0.1.0-alpha.10'
+    name: Android ARM64EC component - ${{ matrix.component }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [wine, fex, graphics, addons]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute pinned source key
+        id: source_key
+        run: echo "value=$(python3 runtime/android/component-key.py '${{ matrix.component }}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: android-ccache-${{ matrix.component }}-${{ steps.source_key.outputs.value }}
+          restore-keys: android-ccache-${{ matrix.component }}-
+      - uses: actions/cache@v4
+        id: component
+        with:
+          path: .android-out/${{ matrix.component }}
+          key: android-native-v2-${{ matrix.component }}-${{ steps.source_key.outputs.value }}
+      - name: Install native build tools
+        if: steps.component.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git curl unzip flex bison gettext autoconf automake libtool pkg-config ninja-build cmake meson glslang-tools mingw-w64 gcc-multilib g++-multilib libwayland-bin libfreetype6-dev libpng-dev zlib1g-dev ccache python3-ply
+      - uses: actions/cache@v4
+        if: steps.component.outputs.cache-hit != 'true'
+        with:
+          path: |-
+            ~/toolchains
+            ~/Android/Sdk/ndk/27.3.13750724
+            ~/termuxfs/aarch64
+          key: android-tools-bylaws20250920-ndk27d-termux-official-v1-${{ matrix.component }}
+      - name: Set up pinned toolchains
+        if: steps.component.outputs.cache-hit != 'true'
+        run: bash runtime/android/setup-tools.sh "${{ matrix.component }}"
+      - name: Build Android component
+        if: steps.component.outputs.cache-hit != 'true'
+        run: bash "runtime/android/build-${{ matrix.component }}.sh"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Android-component-${{ matrix.component }}
+          path: .android-out/${{ matrix.component }}
+          if-no-files-found: error
+          include-hidden-files: true
+
+  build:
+    needs: android_components
+    if: always() && (needs.android_components.result == 'success' || github.ref_name == 'android-proton-v0.1.0-alpha.10')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      actions: read
+    env:
+      COMPONENTS_RUN_ID: ${{ github.ref_name == 'android-proton-v0.1.0-alpha.10' && '40175097066' || github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-component-wine
+          path: .android-out/wine
+          run-id: ${{ env.COMPONENTS_RUN_ID }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-component-fex
+          path: .android-out/fex
+          run-id: ${{ env.COMPONENTS_RUN_ID }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-component-graphics
+          path: .android-out/graphics
+          run-id: ${{ env.COMPONENTS_RUN_ID }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: Android-component-addons
+          path: .android-out/addons
+          run-id: ${{ env.COMPONENTS_RUN_ID }}
+          github-token: ${{ github.token }}
+      - name: Package Android Wine/FEX and both Windows architectures
+        run: |
+          sudo apt-get install -y -qq patchelf
+          python3 runtime/android/package-runtime.py
+      - name: Bundle pinned WoWBox64 translator
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fLsS --retry 3 \
+            'https://raw.githubusercontent.com/utkarshdalal/GameNative/9c5f4121eb6512707eb467d4a70edb3ae8f08ae3/app/src/main/assets/wowbox64/wowbox64-0.4.2.tzst' \
+            -o android/app/src/main/assets/runner/wowbox64-0.4.2.tzst
+          echo '90e6fefea2c9189c2556d6e0661ec4325dfc41fa82413a44a2485ae223e38efd  android/app/src/main/assets/runner/wowbox64-0.4.2.tzst' | sha256sum -c -
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Configure Android SDK and NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER=$(find "$SDK/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)
+          "$SDKMANAGER" --sdk_root="$SDK" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.3.13750724' 'cmake;3.22.1'
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "$SDK/build-tools/35.0.0" >> "$GITHUB_PATH"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Fetch GE-Proton and build the multiarch rootfs
+        env:
+          EAC_RUNTIME_URL: ${{ secrets.PROTON_EAC_RUNTIME_URL }}
+          EAC_RUNTIME_SHA256: ${{ vars.PROTON_EAC_RUNTIME_SHA256 }}
+          EAC_REDISTRIBUTION_APPROVED: ${{ vars.PROTON_EAC_REDISTRIBUTION_APPROVED }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$EAC_RUNTIME_URL" || -n "$EAC_RUNTIME_SHA256" || "$EAC_REDISTRIBUTION_APPROVED" == true ]]; then
+            [[ -n "$EAC_RUNTIME_URL" && "$EAC_RUNTIME_SHA256" =~ ^[0-9a-fA-F]{64}$ && "$EAC_REDISTRIBUTION_APPROVED" == true ]] || {
+              echo 'EAC bundling requires the official archive URL, SHA-256 and redistribution approval' >&2; exit 1;
+            }
+            curl -fLsS --retry 3 --output "$RUNNER_TEMP/proton-eac-runtime.tar.gz" "$EAC_RUNTIME_URL"
+            actual=$(sha256sum "$RUNNER_TEMP/proton-eac-runtime.tar.gz" | cut -d' ' -f1)
+            [[ "$actual" == "${EAC_RUNTIME_SHA256,,}" ]] || { echo 'EAC archive checksum mismatch' >&2; exit 1; }
+            runtime/android/build-linux-proton-packages.sh --eac "$RUNNER_TEMP/proton-eac-runtime.tar.gz"
+            echo 'EAC_INCLUDED=true' >> "$GITHUB_ENV"
+          else
+            runtime/android/build-linux-proton-packages.sh
+            echo 'EAC_INCLUDED=false' >> "$GITHUB_ENV"
+          fi
+      - name: Prepare release signing key
+        shell: bash
+        env:
+          SIGNING_KEYSTORE: ${{ secrets.POCKET_ARCADE_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.POCKET_ARCADE_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.POCKET_ARCADE_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.POCKET_ARCADE_KEY_PASSWORD }}
+          EXPECTED_CERT: ${{ vars.POCKET_ARCADE_SIGNING_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/pocket-arcade-release.keystore"
+          if [[ -n "$SIGNING_KEYSTORE" ]]; then
+            [[ -n "$SIGNING_STORE_PASSWORD" && -n "$SIGNING_KEY_ALIAS" && -n "$SIGNING_KEY_PASSWORD" && "$EXPECTED_CERT" =~ ^[0-9a-fA-F]{64}$ ]] || {
+              echo 'Complete all production signing secrets and certificate SHA-256' >&2; exit 1;
+            }
+            printf '%s' "$SIGNING_KEYSTORE" | base64 -d > "$key"
+            mode=persistent
+          else
+            [[ -z "$SIGNING_STORE_PASSWORD" && -z "$SIGNING_KEY_ALIAS" && -z "$SIGNING_KEY_PASSWORD" && -z "$EXPECTED_CERT" ]] || {
+              echo 'Partial production signing configuration' >&2; exit 1;
+            }
+            SIGNING_STORE_PASSWORD=$(openssl rand -hex 32)
+            SIGNING_KEY_PASSWORD="$SIGNING_STORE_PASSWORD"
+            SIGNING_KEY_ALIAS=pocketarcade
+            keytool -genkeypair -keystore "$key" -storetype PKCS12 -storepass "$SIGNING_STORE_PASSWORD" \
+              -alias "$SIGNING_KEY_ALIAS" -keypass "$SIGNING_KEY_PASSWORD" -keyalg RSA -keysize 4096 \
+              -validity 10000 -dname 'CN=Pocket Arcade Android Release' -noprompt
+            mode=one-time
+          fi
+          chmod 600 "$key"
+          actual=$(keytool -list -v -keystore "$key" -storepass "$SIGNING_STORE_PASSWORD" -alias "$SIGNING_KEY_ALIAS" \
+            | awk '/SHA256:/ {print $2; exit}' | tr -d ':')
+          [[ "$actual" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Cannot read signing certificate' >&2; exit 1; }
+          [[ -z "$EXPECTED_CERT" || "${actual,,}" == "${EXPECTED_CERT,,}" ]] || { echo 'Signing certificate mismatch' >&2; exit 1; }
+          echo "SIGNING_CERT_SHA256=${actual,,}" >> "$GITHUB_ENV"
+          echo "SIGNING_MODE=$mode" >> "$GITHUB_ENV"
+          echo "POCKET_ARCADE_KEYSTORE_FILE=$key" >> "$GITHUB_ENV"
+          echo "POCKET_ARCADE_KEYSTORE_PASSWORD=$SIGNING_STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "POCKET_ARCADE_KEY_ALIAS=$SIGNING_KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "POCKET_ARCADE_KEY_PASSWORD=$SIGNING_KEY_PASSWORD" >> "$GITHUB_ENV"
+      - name: Test real packages and build the signed all-in-one APK
+        working-directory: android
+        env:
+          LINUX_PROTON_REAL_ARCHIVES: ${{ github.workspace }}/android/app/src/main/assets/linux-proton
+        run: |
+          gradle --no-daemon --max-workers=2 \
+            -Dorg.gradle.jvmargs='-Xmx12g -Dfile.encoding=UTF-8' \
+            --console=plain testReleaseUnitTest assembleRelease \
+            2>&1 | tee "$RUNNER_TEMP/android-release-gradle.log"
+      - name: Show release build error in job summary
+        if: failure()
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/android-release-gradle.log" ]]; then
+            {
+              echo '## Android release Gradle failure'
+              echo '```text'
+              tail -n 120 "$RUNNER_TEMP/android-release-gradle.log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Verify APK, native libraries and included archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          python3 runtime/android/check-apk.py "$apk"
+          if [[ "$EAC_INCLUDED" == true ]]; then
+            python3 runtime/android/verify-linux-proton-apk.py "$apk" --require-eac-and-android
+          else
+            python3 runtime/android/verify-linux-proton-apk.py "$apk" --require-android-runtime
+          fi
+          ! aapt2 dump badging "$apk" | grep -q 'application-debuggable'
+          actual=$(apksigner verify --print-certs "$apk" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2}')
+          [[ "${actual,,}" == "${SIGNING_CERT_SHA256,,}" ]] || { echo 'APK signing certificate mismatch' >&2; exit 1; }
+          zipalign -c -v 4 "$apk" >/dev/null
+      - name: Stage downloadable files and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp android/app/build/outputs/apk/release/app-release.apk \
+            release-assets/PocketArcade-Android-arm64-release.apk
+          cp android/LINUX-PROTON.md release-assets/LINUX-PROTON.md
+          cp android/POCKET-DOCK.md release-assets/POCKET-DOCK.md
+          cp android/MI-PAD-7-RUNTIME.md release-assets/MI-PAD-7-RUNTIME.md
+          cp android/EAC-SETUP.md release-assets/EAC-SETUP.md
+          printf 'Signing: %s\nCertificate SHA-256: %s\nEAC bundled: %s\n' \
+            "$SIGNING_MODE" "$SIGNING_CERT_SHA256" "$EAC_INCLUDED" > release-assets/PACKAGE-STATUS.txt
+          (cd release-assets && sha256sum -- * > SHA256SUMS.txt)
+          for f in release-assets/*; do
+            test "$(stat -c %s "$f")" -lt 2147483648 || { echo "Too large for a GitHub release: $f"; exit 1; }
+          done
+      - name: Upload downloadable build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketArcade-Android-all-in-one
+          path: release-assets/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+  install_smoke:
+    name: Install signed all-in-one APK in Android package manager
+    needs: build
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketArcade-Android-all-in-one
+          path: apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -partition-size 8192
+          script: |
+            adb install apk/PocketArcade-Android-arm64-release.apk
+            adb shell pm path org.pocketarcade.madeira
+
+  release:
+    needs: [build, install_smoke]
+    if: always() && needs.build.result == 'success' && needs.install_smoke.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: PocketArcade-Android-all-in-one
+          path: release-assets
+      - name: Verify and publish pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.POCKET_ARCADE_RELEASE_TOKEN || github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          (cd release-assets && sha256sum -c SHA256SUMS.txt)
+          tag="$GITHUB_REF_NAME"
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release $tag already exists" >&2
+            exit 1
+          fi
+          cat > release-notes.md <<EOF
+          Pocket Arcade signed all-in-one Android APK from commit ${GITHUB_SHA}.
+
+          Install \`PocketArcade-Android-arm64-release.apk\`. It includes Android ARM64EC Proton-Wine/FEX with Windows x86/x64 modules, GE-Proton, the multiarch Debian rootfs, Box64 and WoWBox64. The official Proton EasyAntiCheat Runtime is only bundled when the repository owner supplies an approved archive; otherwise sign in to Steam in the app and install the separate EAC tool there. See PACKAGE-STATUS.txt for this APK's exact contents.
+
+          Pocket Dock's Android Box32 Linux translator and Adreno-accelerated Linux Vulkan bridge remain unavailable. Its Linux Vulkan fallback uses the CPU. EAC support depends on the game's publisher; Proton execution and Rocket League matchmaking have not been verified on the Mi Pad 7.
+
+          This is a non-debug release APK. Check PACKAGE-STATUS.txt: a one-time signing certificate means a future APK cannot update this one in place. Earlier debug-signed alphas also cannot be updated in place; back up app data before uninstalling. See \`LINUX-PROTON.md\` for setup and limitations.
+          EOF
+          gh release create "$tag" release-assets/* --repo "$GH_REPO" \
+            --target "$GITHUB_SHA" --title "Pocket Arcade Android Wine/FEX + Proton $tag" \
+            --notes-file release-notes.md --prerelease

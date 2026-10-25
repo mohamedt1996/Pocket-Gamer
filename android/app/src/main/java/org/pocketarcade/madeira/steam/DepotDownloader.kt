@@ -130,8 +130,8 @@ class DepotDownloader(private val session: CmSession, private val http: HttpClie
      * Returns the install folder. Cancellation keeps completed chunks journaled.
      */
     suspend fun install(app: AppInfo, steamApps: File, ownedDepots: suspend () -> Set<Int>? = { null },
-                        report: (DownloadProgress) -> Unit): File {
-        val depots = app.installDepots()
+                        os: String = "windows", report: (DownloadProgress) -> Unit): File {
+        val depots = app.installDepots(os)
         if (depots.isEmpty()) throw SteamException(SteamError.DepotNotFound(app.appID))
         SteamLog.event("[steam-depot] selection app=${app.appID} build=${app.buildID} ${app.depotSelectionSummary()}")
         val folderName = SteamInstallFiles.safeFolderName(app.installDir.ifEmpty { "app_${app.appID}" })

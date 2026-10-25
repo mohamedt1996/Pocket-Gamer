@@ -1401,67 +1401,20 @@ jobs:
         path: .android-out/${{ matrix.component }}
         if-no-files-found: error
         include-hidden-files: true
+    - name: Report the build error
+      if: failure()
+      shell: bash
+      run: |
+        f=".android-logs/${{ matrix.component }}.log"
+        [ -f "$f" ] || exit 0
+        body=$(grep -n -iE 'error|fatal|undefined reference|No such file' "$f" | tail -n 25; echo ---; tail -n 25 "$f")
+        body=$(printf '%s' "$body" | cut -c1-300 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\r/%0D/g;s/\n/%0A/g')
+        echo "::error title=${{ matrix.component }} build failed::$body"
     - name: Upload build logs
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: Android-logs-${{ matrix.component }}
-        path: .android-logs
-        if-no-files-found: ignore
-        include-hidden-files: true
-  android_madeira_wine:
-    # Experimental: Madeira's Wine (willfaust/wine) ported to Android. Separate
-    # from android_components so it never blocks the shipped APK; see
-    # runtime/android/madeira/README.md.
-    name: "Android source build \u2022 wine-madeira (experimental)"
-    runs-on: ubuntu-24.04
-    timeout-minutes: 350
-    continue-on-error: true
-    steps:
-    - uses: actions/checkout@v4
-    - name: Compute component source key
-      id: source_key
-      run: echo "value=$(python3 runtime/android/component-key.py wine-madeira)" >> "$GITHUB_OUTPUT"
-    - uses: actions/cache@v4
-      id: component
-      with:
-        path: .android-out/wine-madeira
-        key: android-native-v2-wine-madeira-${{ steps.source_key.outputs.value }}
-    - name: Install native build tools
-      if: steps.component.outputs.cache-hit != 'true'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential git curl unzip flex bison gettext autoconf automake libtool pkg-config python3 libfreetype-dev
-    - uses: actions/cache@v4
-      if: steps.component.outputs.cache-hit != 'true'
-      with:
-        path: |-
-          ~/toolchains
-          ~/Android/Sdk/ndk/27.3.13750724
-          ~/termuxfs/aarch64
-        key: android-tools-bylaws20250920-ndk27d-termux-official-v1-wine-madeira
-    - name: Set up pinned toolchains
-      if: steps.component.outputs.cache-hit != 'true'
-      run: bash runtime/android/setup-tools.sh wine-madeira
-    - name: Compile Madeira Wine from pinned source
-      if: steps.component.outputs.cache-hit != 'true'
-      shell: bash
-      run: |
-        set -euo pipefail
-        mkdir -p .android-logs
-        bash runtime/android/build-wine-madeira.sh 2>&1 | tee .android-logs/wine-madeira.log
-    - name: Upload component
-      uses: actions/upload-artifact@v4
-      with:
-        name: Android-component-wine-madeira
-        path: .android-out/wine-madeira
-        if-no-files-found: error
-        include-hidden-files: true
-    - name: Upload build logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: Android-logs-wine-madeira
         path: .android-logs
         if-no-files-found: ignore
         include-hidden-files: true
@@ -1488,9 +1441,13 @@ jobs:
     - uses: gradle/actions/setup-gradle@v4
       with:
         gradle-version: '8.9'
+    - name: Validate runtime scripts and source locks
+      run: python3 runtime/android/tests/validate.py
     - name: Unit tests and APK
       working-directory: android
       run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
+    - name: Check native libraries load on 16 KB page devices
+      run: python3 runtime/android/check-apk.py android/app/build/outputs/apk/debug/*.apk
     - name: Upload test reports
       if: always()
       uses: actions/upload-artifact@v4
@@ -1530,8 +1487,6 @@ jobs:
       with:
         name: Android-component-addons
         path: .android-out/addons
-    - name: Assemble and verify runtime bundle
-      run: python3 runtime/android/package-runtime.py
     - name: Configure SDK and NDK
       shell: bash
       run: |
@@ -1540,12 +1495,18 @@ jobs:
         SDKMANAGER=$(find "$SDK/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)
         "$SDKMANAGER" --sdk_root="$SDK" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.3.13750724' 'cmake;3.22.1'
         echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+    - name: Assemble and verify runtime bundle
+      run: |
+        sudo apt-get install -y -qq patchelf
+        python3 runtime/android/package-runtime.py
     - uses: gradle/actions/setup-gradle@v4
       with:
         gradle-version: '8.9'
     - name: Build bundled Android APK
       working-directory: android
       run: gradle --no-daemon assembleDebug
+    - name: Check native libraries load on 16 KB page devices
+      run: python3 runtime/android/check-apk.py android/app/build/outputs/apk/debug/*.apk
     - name: Confirm APK contains runtime
       run: |
         python3 - <<'PYAPK'
@@ -1570,83 +1531,163 @@ jobs:
         if-no-files-found: error
         include-hidden-files: true
 
-  android_port_madeira:
-    # Experimental second APK: the same app and FEX/graphics components, but with
-    # Madeira's Wine (android_madeira_wine) instead of the Proton Android fork.
-    # Separate application ID, so it installs next to the regular APK.
-    name: Package Android APK with Madeira Wine (experimental)
-    needs: [android_components, android_madeira_wine]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+  android_pagesize_test:
+    name: "Android runtime on a ${{ matrix.page }} page kernel \u2022 ${{ matrix.wine }} \u2022 ${{ matrix.cpu }} ${{ matrix.bionic }}"
+    needs: android_port
+    if: always() && needs.android_port.result == 'success'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 200
     continue-on-error: true
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - wine: proton
+          artifact: Madeira-Android-runtime-lab-debug
+          page: 16 KB
+          kernel: arm64-16k
+          cpu: neoverse-n1
     steps:
     - uses: actions/checkout@v4
-    - uses: actions/setup-java@v4
-      with:
-        distribution: temurin
-        java-version: '17'
     - uses: actions/download-artifact@v4
       with:
-        name: Android-component-wine-madeira
-        path: .android-out/wine-madeira
-    - uses: actions/download-artifact@v4
-      with:
-        name: Android-component-fex
-        path: .android-out/fex
-    - uses: actions/download-artifact@v4
-      with:
-        name: Android-component-graphics
-        path: .android-out/graphics
-    - uses: actions/download-artifact@v4
-      with:
-        name: Android-component-addons
-        path: .android-out/addons
-    - name: Assemble and verify runtime bundle
-      run: python3 runtime/android/package-runtime.py --wine wine-madeira
-    - name: Configure SDK and NDK
-      shell: bash
+        name: ${{ matrix.artifact }}
+        path: apk
+    - name: Install Android userspace (bionic, Vulkan loader, lavapipe)
+      run: bash runtime/android/tests/smoke/setup.sh logs/setup
+    - name: Install QEMU
+      run: sudo apt-get install -y -qq qemu-system-arm busybox-static cpio android-sdk-libsparse-utils erofs-utils e2fsprogs kmod zstd
+    - name: Build test programs
       run: |
-        set -euo pipefail
-        SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-        SDKMANAGER=$(find "$SDK/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)
-        "$SDKMANAGER" --sdk_root="$SDK" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.3.13750724' 'cmake;3.22.1'
-        echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-    - uses: gradle/actions/setup-gradle@v4
-      with:
-        gradle-version: '8.9'
-    - name: Build bundled Android APK
-      working-directory: android
-      run: gradle --no-daemon -PwineVariant=madeira assembleDebug
-    - name: Confirm APK contains the Madeira runtime
+        mkdir -p tests-bin
+        for t in x86_64 i686; do
+          $t-w64-mingw32-gcc -O2 -o tests-bin/cli-$t.exe runtime/android/tests/smoke/cli.c -lws2_32
+          $t-w64-mingw32-gcc -O2 -o tests-bin/devices-$t.exe runtime/android/tests/smoke/devices.c -ld3d11 -ld3d12 -ldxgi
+          $t-w64-mingw32-gcc -O2 -idirafter /usr/include -o tests-bin/vk-$t.exe runtime/android/tests/smoke/vk.c
+          $t-w64-mingw32-gcc -O2 -o tests-bin/audio-$t.exe runtime/android/tests/smoke/audio.c -lole32 -luuid -lm
+        done
+    - name: Run the runtime in a 16 KB page VM
+      timeout-minutes: 180
+      env:
+        SMOKE_TIME_SCALE: "8"
+        KERNEL_FLAVOR: ${{ matrix.kernel }}
+        VM_CPU: ${{ matrix.cpu }}
+        BIONIC: ${{ matrix.bionic }}
+      run: bash runtime/android/tests/pagesize/run-vm.sh apk/*.apk tests-bin logs
+    - name: Publish the VM's trace logs as check runs
+      if: always()
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
-        python3 - <<'PYAPK'
-        import io,json,zipfile,pathlib
-        apks=list(pathlib.Path('android/app/build/outputs/apk/debug').glob('*.apk'))
-        assert len(apks)==1, f'expected one APK, found {len(apks)}'
-        with zipfile.ZipFile(apks[0]) as z:
-            assert z.getinfo('lib/arm64-v8a/libmadeira_probe.so').file_size > 0
-            runtime=zipfile.ZipFile(io.BytesIO(z.read('assets/madeira-runtime.zip')))
-            manifest=json.loads(runtime.read('runtime.json'))
-            assert manifest['wine']=='wine-madeira', manifest.get('wine')
-            for name in ('lib/wine/aarch64-unix/ntdll.so','lib/wine/aarch64-unix/winedirectaudio.so',
-                         'share/licenses/madeira/COPYING'):
-                runtime.getinfo(name)
-        print('APK carries the Madeira Wine runtime:',apks[0].name)
-        PYAPK
+        bash runtime/android/tests/pagesize/publish-logs.sh "${{ matrix.kernel }} ${{ matrix.wine }} ${{ matrix.cpu }} ${{ matrix.bionic }}" \
+          /vmout/probe-first-av.log /vmout/probe.log /vmout/probe2.log \
+          /vmout/logs/cli-x86-seh.log /vmout/logs/cli-x64-seh.log
     - uses: actions/upload-artifact@v4
+      if: always()
       with:
-        name: MadeiraWine-Android-runtime-lab-debug
-        path: android/app/build/outputs/apk/debug/*.apk
-        if-no-files-found: error
-        include-hidden-files: true
+        name: Android-pagesize-test-${{ matrix.kernel }}-${{ matrix.wine }}-${{ matrix.cpu }}${{ matrix.bionic }}
+        path: logs
+
+  android_emulator_test:
+    # The app itself (no Windows runtime) on real Android: x86_64 emulator images
+    # with ARM64 translation. Install, start, first screen, random use, process
+    # death. See runtime/android/tests/emulator/run.sh.
+    name: "Android app on emulator \u2022 API ${{ matrix.api }}"
+    needs: android_app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [30, 34, 35, 36]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      with:
+        name: Pocket-Arcade-app-without-runtime-debug
+        path: apk
+    - name: Enable KVM
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+    - name: Run on the emulator
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: ${{ matrix.api }}
+        arch: x86_64
+        target: google_apis
+        disable-animations: true
+        emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+        script: bash runtime/android/tests/emulator/run.sh "$(ls apk/*.apk | head -1)" emulator-logs
     - uses: actions/upload-artifact@v4
+      if: always()
       with:
-        name: MadeiraWine-Android-source-lock-and-notices
-        path: |
-          runtime/android
-          .android-out/bundle/share/licenses
-        if-no-files-found: error
-        include-hidden-files: true
+        name: Android-emulator-test-api${{ matrix.api }}
+        path: emulator-logs
+        if-no-files-found: ignore
+  android_runtime_test:
+    # Runs each APK's Windows runtime on a native arm64 runner with Android's own
+    # bionic libc and linker (Termux aosp-libs), as the app runs it on a phone:
+    # wineboot, CPU/OS checks through FEX, and D3D11/D3D12 device creation on
+    # lavapipe. Headless (Wine's null graphics driver). See runtime/android/tests/smoke.
+    name: "Android runtime test \u2022 ${{ matrix.wine }}"
+    needs: android_port
+    if: always() && needs.android_port.result == 'success'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - wine: proton
+          artifact: Madeira-Android-runtime-lab-debug
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      with:
+        name: ${{ matrix.artifact }}
+        path: apk
+    - name: Install Android userspace (bionic, Vulkan loader, lavapipe)
+      run: bash runtime/android/tests/smoke/setup.sh logs/setup
+    - name: Build test programs
+      run: |
+        mkdir -p tests-bin
+        for t in x86_64 i686; do
+          $t-w64-mingw32-gcc -O2 -o tests-bin/cli-$t.exe runtime/android/tests/smoke/cli.c -lws2_32
+          $t-w64-mingw32-gcc -O2 -o tests-bin/devices-$t.exe runtime/android/tests/smoke/devices.c -ld3d11 -ld3d12 -ldxgi
+          $t-w64-mingw32-gcc -O2 -idirafter /usr/include -o tests-bin/vk-$t.exe runtime/android/tests/smoke/vk.c
+          $t-w64-mingw32-gcc -O2 -o tests-bin/audio-$t.exe runtime/android/tests/smoke/audio.c -lole32 -luuid -lm
+        done
+    - name: FEX to put into the runtime instead of the APK's
+      if: matrix.fex_overlay
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ matrix.fex_overlay }}
+        path: fex-overlay
+    - name: Unstripped Wine libraries for stack traces
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: Android-component-wine
+        path: wine-component
+    - name: Run the runtime
+      timeout-minutes: 30
+      run: |
+        [ -d wine-component/debug ] && export STACK_SYMBOLS="$PWD/wine-component/debug"
+        [ -d fex-overlay ] && export RUNTIME_OVERLAY="$PWD/fex-overlay"
+        bash runtime/android/tests/smoke/run.sh apk/*.apk tests-bin logs
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: Android-runtime-test-${{ matrix.wine }}
+        path: logs
+        if-no-files-found: ignore
   publish_ios:
     name: Separate iOS release
     if: github.event_name == 'workflow_dispatch' && inputs.publish_releases == true

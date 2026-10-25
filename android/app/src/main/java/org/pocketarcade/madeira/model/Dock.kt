@@ -53,6 +53,13 @@ class DockModel(
     /** Built into this APK (the runtime's addons/dock). */
     fun bundled(runtimeRoot: File) = File(runtimeRoot, "addons/dock/dockhost.exe").isFile
 
+    /**
+     * Whether this build can start Madeira Dock. A runtime packaged in the APK always carries
+     * dockhost.exe (package-runtime.py requires it), but it is only unpacked at the first game
+     * start, so the unpacked file alone would say "missing" on a fresh install.
+     */
+    fun hostAvailable(runtime: org.pocketarcade.madeira.PortRuntime) = runtime.bundled() || bundled(runtime.root())
+
     fun refresh() { if (_components.value !is Components.Downloading) _components.value = if (prefix.clientInstalled) Components.Ready else Components.Missing }
 
     private fun sha256(f: File): String {
@@ -123,7 +130,7 @@ class DockModel(
     /** Removes Valve's client files (not the games, nor the prefix). */
     suspend fun removeComponents() = withContext(Dispatchers.IO) {
         val root = prefix.clientRoot
-        root.listFiles()?.forEach { if (it.name != "steamapps") it.deleteRecursively() }
+        root.listFiles()?.forEach { if (it.name != "steamapps") org.pocketarcade.madeira.platform.FileTrees.delete(it) }
         _components.value = Components.Missing
     }
 
@@ -265,10 +272,9 @@ class DockModel(
  * folder ($XDG_CACHE_HOME/wine) when it creates a prefix; existing prefixes get it in
  * their next session.
  */
-class WineMono(private val context: Context, private val http: HttpClient, private val wineVariant: String) {
-    val version: String get() = if (wineVariant == "madeira") "11.0.0" else "10.4.1"
-    private val sha256: String get() = if (wineVariant == "madeira") "d7efede0b9bdcf52134f8cd6ced59d9fece976f70b11a400bdb47b864569cd27"
-        else "071f4b2887e1c97a11d791ff3d65be9429eed6dec4c2708888bfd546ba358e23"
+class WineMono(private val context: Context, private val http: HttpClient) {
+    val version: String get() = "10.4.1"
+    private val sha256: String get() = "071f4b2887e1c97a11d791ff3d65be9429eed6dec4c2708888bfd546ba358e23"
     val file: File get() = File(context.filesDir, "wine-cache/wine/wine-mono-$version-x86.msi")
     private val url: String get() = "https://dl.winehq.org/wine/wine-mono/$version/wine-mono-$version-x86.msi"
 

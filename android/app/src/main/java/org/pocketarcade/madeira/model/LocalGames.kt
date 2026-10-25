@@ -93,7 +93,8 @@ class LocalGames(private val context: Context) {
     }
 
     suspend fun remove(id: String) = withContext(Dispatchers.IO) {
-        store.directory(id).deleteRecursively()
+        // The game folder holds its Wine prefix, whose z: drive links to "/".
+        org.pocketarcade.madeira.platform.FileTrees.delete(store.directory(id))
         refresh()
     }
 

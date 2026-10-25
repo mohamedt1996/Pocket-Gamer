@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -50,6 +51,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -141,21 +143,53 @@ private fun <T> Choice(options: List<Pair<T, String>>, selected: T, onSelect: (T
 /** Settings every library game has: graphics, on screen and advanced. */
 @Composable
 fun CommonSettings(config: GameConfig, onChange: (GameConfig) -> Unit) {
-    val recommended = PeInspector.recommendedGraphics(config.apis.toSet())
+    val gpu = org.pocketarcade.madeira.platform.GpuCaps.current
+    val ideal = PeInspector.recommendedGraphics(config.apis.toSet())
+    val recommended = org.pocketarcade.madeira.core.GraphicsChoice.fit(ideal, gpu)
     val names = mapOf("wine" to "Wine", "dxvk" to "DXVK", "vkd3d" to "VKD3D")
+    val gpuLine = gpu?.let { "\nGPU: ${it.summary()}." } ?: ""
+    val chosen = if (config.graphics == "auto") recommended else config.graphics
+    val unsupported = when {
+        gpu == null || !gpu.vulkan -> null
+        chosen == "vkd3d" && !gpu.vkd3d -> "This GPU's driver cannot run VKD3D-Proton (missing: ${gpu.vkd3dMissing.take(4).joinToString(", ")})."
+        (chosen == "dxvk" || chosen == "vkd3d") && !gpu.dxvk -> "This GPU's driver cannot run DXVK (missing: ${gpu.dxvkMissing.take(4).joinToString(", ")})."
+        else -> null
+    }
     SettingsSection("Graphics", footer = when (config.graphics) {
         "auto" -> "Auto picks ${names[recommended]} for this game" + (if (config.apis.isNotEmpty()) " (it uses ${config.apis.joinToString(", ")})." else ".") +
+            (org.pocketarcade.madeira.core.GraphicsChoice.reason(ideal, recommended, gpu)?.let { " $it" } ?: "") +
             " DXVK runs Direct3D 8–11 on Vulkan; VKD3D-Proton runs Direct3D 12."
-        "wine" -> "Wine's own Direct3D, for older games and DirectDraw."
-        "dxvk" -> "DXVK runs Direct3D 8–11 on Vulkan."
-        else -> "VKD3D-Proton runs Direct3D 12 on Vulkan, with DXVK for older APIs."
-    }) {
+        "wine" -> "Wine's own Direct3D on Vulkan, for older games, DirectDraw and GPUs DXVK cannot use."
+        "dxvk" -> "DXVK runs Direct3D 8–11 on Vulkan." + (unsupported?.let { " $it" } ?: "")
+        else -> "VKD3D-Proton runs Direct3D 12 on Vulkan, with DXVK for older APIs." + (unsupported?.let { " $it" } ?: "")
+    } + gpuLine) {
         Choice(listOf("auto" to "Auto", "wine" to "Wine", "dxvk" to "DXVK", "vkd3d" to "VKD3D"), config.graphics) { onChange(config.copy(graphics = it)) }
     }
     SettingsSection("On screen") {
         ToggleRow("Touch controls", config.touchControls, "Shown when no controller is connected. Edit them from the in-game menu.") { onChange(config.copy(touchControls = it)) }
         RowDivider()
         ToggleRow("Performance overlay", config.performance, "Frame rate in the corner, and DXVK's HUD.") { onChange(config.copy(performance = it)) }
+    }
+    SettingsSection("Frame cap", footer = when (config.frameCap) {
+        "auto" -> "60 frames per second, or 30 when Android power saver or battery game mode is on at launch. Applies to DXVK and VKD3D-Proton."
+        "off" -> "No cap: the game draws as fast as it can. Fastest, and hottest."
+        else -> "At most ${config.frameCap} frames per second (DXVK and VKD3D-Proton)."
+    }) {
+        FlowRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            org.pocketarcade.madeira.core.Performance.FRAME_CAPS.forEach { cap ->
+                FilterChip(selected = config.frameCap == cap,
+                    onClick = { onChange(config.copy(frameCap = cap)) },
+                    label = { Text(when (cap) { "auto" -> "Auto"; "off" -> "Off"; else -> cap }) })
+            }
+        }
+    }
+    SettingsSection("CPU", footer = when (config.cpuMode) {
+        "compatible" -> "Stricter x86 emulation for games that glitch or crash in Balanced. Uses more CPU."
+        "fast" -> "Skips x86 memory-ordering emulation and reduces x87 precision. May reduce translation work, but some games crash or misbehave. Compare performance and stability with Balanced."
+        else -> "FEX's own defaults: the best mix of speed and compatibility."
+    }) {
+        Choice(listOf("compatible" to "Compatible", "balanced" to "Balanced", "fast" to "Fast"), config.cpuMode) { onChange(config.copy(cpuMode = it)) }
     }
     var arguments by remember(config.arguments) { mutableStateOf(config.arguments) }
     var environment by remember(config.environment) { mutableStateOf(config.environment) }
@@ -198,6 +232,7 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
     var confirmUninstall by remember { mutableStateOf(false) }
     var programs by remember { mutableStateOf<List<String>?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var pocketStatus by remember { mutableStateOf<String?>(null) }
     val update = graph.library.updateAvailable(appID)
 
     LaunchedEffect(appID, installed?.buildID) {
@@ -210,7 +245,7 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
         if (blocker != null) {
             when {
                 !graph.account.signedIn && config.startWith == "dock" -> nav.push(Screen.SignIn)
-                !graph.prefix.clientInstalled && config.startWith == "dock" -> nav.push(Screen.Dock)
+                config.startWith == "dock" && !org.pocketarcade.madeira.epic.LinuxProton.staged(context, false) -> nav.push(Screen.Dock)
                 else -> notice = blocker
             }
             return
@@ -218,7 +253,14 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
         if (!skipCloud) graph.library.cloudHold(appID)?.let { hold = it; return }
         starting = true
         scope.launch {
-            try { Launcher.start(context, Launches.steam(graph, appID)) }
+            try {
+                if (config.startWith == "dock") {
+                    val plan = org.pocketarcade.madeira.model.PocketDock.prepare(graph, appID)
+                    context.startForegroundService(Intent(context, org.pocketarcade.madeira.epic.LinuxProtonService::class.java)
+                        .putExtra(org.pocketarcade.madeira.epic.LinuxProtonService.PLAN, plan.toJson()))
+                    notice = "Pocket Dock started Proton. Keep the X11 display open; use Check Proton status below if no window appears."
+                } else Launcher.start(context, Launches.steam(graph, appID))
+            }
             catch (e: Exception) { notice = e.message ?: "The game could not start." }
             starting = false
         }
@@ -255,10 +297,10 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
         }
         if (installed != null && cloudOn && graph.account.signedIn) CloudSection(graph, appID, cloudStates[appID])
         if (installed != null) {
-            SettingsSection("Start with", footer = if (config.startWith == "dock") "Madeira Dock starts the game through Valve's own Steam client: Steam's sign-in, licence check and DRM, without Steam's window."
-                else "The game's own program, without Steam. Suits games that do not need Steam.") {
-                Choice(listOf("dock" to "Madeira Dock", "game" to "The game"), config.startWith) { v -> graph.steamConfigs.update(appID) { it.copy(startWith = v) } }
-                if (config.startWith == "game") {
+            SettingsSection("Start with", footer = if (config.startWith == "dock") "Pocket Dock runs Linux Proton through Box64. An X11 display and a working Vulkan bridge are required. On Adreno 732, try Android Wine/FEX with the system driver first."
+                else "Android Wine/FEX uses the tablet's system Vulkan driver. This option needs an APK with the Android runtime bundled.") {
+                Choice(listOf("dock" to "Pocket Dock", "game" to "Android Wine/FEX"), config.startWith) { v -> graph.steamConfigs.update(appID) { it.copy(startWith = v) } }
+                if (config.startWith == "game" || config.startWith == "dock") {
                     val root = File(graph.prefix.drive, "${installed.library}/common/${installed.installDir}")
                     val current = DirectStart.program(config.program, game?.launches, root)
                     RowDivider()
@@ -266,13 +308,20 @@ fun SteamGameScreen(graph: AppGraph, nav: Navigator, appID: Int) {
                 }
             }
             CommonSettings(config) { c -> graph.steamConfigs.save(appID, c); graph.scope.launch { graph.library.inspect(appID) } }
+            if (config.startWith == "dock") SettingsSection("Pocket Dock") {
+                SettingsRow("Check Proton status") {
+                    pocketStatus = org.pocketarcade.madeira.epic.LinuxProton.statusText(
+                        File(context.filesDir, "steam-proton/$appID"))
+                }
+                pocketStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
             SettingsSection("Install", footer = "App ${appID} · ${installed.windowsInstallPath}") {
                 SettingsRow("Check files", subtitle = "Compares every file with Steam's current build and fetches what differs.", icon = Icons.Filled.Build) { graph.library.repair(appID) }
                 RowDivider()
                 SettingsRow("Uninstall", tint = colors.red, icon = Icons.Filled.Delete) { confirmUninstall = true }
             }
             val (found, pending) = remember(installed, version) { graph.dock.plannedInstalls(installed) }
-            if (found.isNotEmpty()) SettingsSection("One-time installs", footer = "Valve's client runs these before a game's first start; Madeira Dock runs them in the session before the game. Each runs once.") {
+            if (found.isNotEmpty()) SettingsSection("One-time installs", footer = "These Steam install scripts are shown for reference. Pocket Dock does not run them automatically.") {
                 for ((i, p) in found.withIndex()) {
                     if (i > 0) RowDivider()
                     SettingsRow(org.pocketarcade.madeira.core.InstallScripts.label(p.run), if (p in pending) "Next start" else "Done")

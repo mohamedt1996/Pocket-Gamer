@@ -1,18 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-WORK="$ROOT/.android-work/fex"
-OUT="$ROOT/.android-out/fex"
+# FEX_SOURCE: the sources.json entry; FEX_COMPONENT: the output component.
+FEX_SOURCE="${FEX_SOURCE:-fex}"
+FEX_COMPONENT="${FEX_COMPONENT:-fex}"
+WORK="$ROOT/.android-work/$FEX_COMPONENT"
+OUT="$ROOT/.android-out/$FEX_COMPONENT"
 : "${ANDROID_NDK_HOME:?}" "${LLVM_MINGW:?}"
 export PATH="$LLVM_MINGW/bin:$PATH"
-python3 "$ROOT/runtime/android/fetch.py" fex "$WORK"
+python3 "$ROOT/runtime/android/fetch.py" "$FEX_SOURCE" "$WORK"
+HOST_FLAGS=()
+if [ "$FEX_COMPONENT" = fex ]; then
+  # Guard regions that also hold on 16 KB page kernels (see the patch).
+  git -C "$WORK" checkout -q -- .
+  git -C "$WORK" apply "$ROOT/runtime/android/patches/fex-16k-guards.patch"
+fi
 mkdir -p "$OUT/lib/wine/aarch64-windows" "$OUT/lib/wine/aarch64-unix" "$OUT/share/licenses/fex"
 for target in arm64ec aarch64; do
   cmake -S "$WORK" -B "$WORK/build-$target" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$WORK/Data/CMake/toolchain_mingw.cmake" \
     -DMINGW_TRIPLE="$target-w64-mingw32" -DENABLE_LTO=OFF -DBUILD_TESTING=OFF \
-    -DENABLE_ASSERTIONS=OFF -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF -DTUNE_ARCH=generic -DTUNE_CPU=none -DRANGES_NATIVE=OFF
-  cmake --build "$WORK/build-$target" --parallel 2
+    -DENABLE_ASSERTIONS=OFF -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF -DTUNE_ARCH=generic -DTUNE_CPU=none -DRANGES_NATIVE=OFF \
+    "${HOST_FLAGS[@]}"
+  # Only the module Wine loads: the rest (libFEXCore.dll, tools) is never shipped.
+  module=$([ "$target" = arm64ec ] && echo arm64ecfex || echo wow64fex)
+  cmake --build "$WORK/build-$target" --parallel 2 --target "$module"
   find "$WORK/build-$target" -type f -name 'lib*fex.dll' -exec cp '{}' "$OUT/lib/wine/aarch64-windows/" \;
 done
 # Match the Unix-call ABI to the exact same FEX revision as the PE modules.

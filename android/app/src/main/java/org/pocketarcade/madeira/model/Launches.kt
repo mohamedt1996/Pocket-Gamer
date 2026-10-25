@@ -11,6 +11,7 @@ import org.pocketarcade.madeira.AppGraph
 import org.pocketarcade.madeira.GameStore
 import org.pocketarcade.madeira.core.DirectStart
 import org.pocketarcade.madeira.core.DockException
+import org.pocketarcade.madeira.epic.LinuxProton
 import org.pocketarcade.madeira.session.LaunchSpec
 import java.io.File
 
@@ -22,19 +23,19 @@ object Launches {
         if (graph.library.downloads.value.containsKey(appID)) return "This game is being downloaded. Play is available when it is done."
         val config = graph.steamConfigs.get(appID)
         if (config.startWith == "game") {
+            if (!graph.runtime.bundled()) return "This APK has no Android Wine runtime. Select Pocket Dock under Start with."
             val root = File(graph.prefix.drive, "${g.library}/common/${g.installDir}")
             if (DirectStart.program(config.program, graph.library.game(appID)?.launches, root).isNullOrEmpty()) return "Choose the program to start below, under Start with."
             return null
         }
-        if (!graph.prefix.clientInstalled) return "Madeira Dock needs Valve's client components. Download them in Settings › Steam › Madeira Dock."
         if (!graph.account.signedIn) return "Sign in to Steam to play."
-        if (!graph.dock.bundled(graph.runtime.root()) && graph.runtime.bundled()) return "This build has no Madeira Dock host."
+        if (!LinuxProton.staged(graph.context, false)) return "Install the included Linux packages and Box64 in Settings › Pocket Dock."
         return null
     }
 
     private fun quote(path: String) = "\"" + path + "\""
 
-    /** The session for a Steam game, through Madeira Dock or its own program. */
+    /** Legacy Android Wine session for a Steam game; Pocket Dock uses Linux Proton. */
     suspend fun steam(graph: AppGraph, appID: Int): LaunchSpec {
         val g = graph.library.installedGame(appID) ?: throw DockException("The game is not installed.")
         val config = graph.steamConfigs.get(appID)
@@ -54,7 +55,8 @@ object Launches {
             LaunchSpec(graph.prefix.home.absolutePath, quote(LaunchSpec.windowsPath(program)) + (if (args.isEmpty()) "" else " $args"),
                 folder.absolutePath, name, graphics = config.resolvedGraphics(), environment = extra, dllOverrides = config.dllOverrides,
                 touchControls = config.touchControls, controlLayout = config.controlLayout, performance = config.performance,
-                binds = config.binds, stickMouse = config.stickMouse, steamAppID = appID, diagnostics = graph.settings.diagnostics.value)
+                binds = config.binds, stickMouse = config.stickMouse, steamAppID = appID, diagnostics = graph.settings.diagnostics.value,
+                frameCap = config.frameCap, cpuMode = config.cpuMode, steadyPerformance = graph.settings.steadyPerformance.value)
         } else {
             val options = graph.library.launchOptions(appID)
             val (command, env) = graph.dock.prepareLaunch(g, graph.dock.launchOption(options, g), name, graph.mono.file.takeIf { it.isFile })
@@ -62,7 +64,8 @@ object Launches {
                 environment = env + extra, dllOverrides = config.dllOverrides, touchControls = config.touchControls,
                 controlLayout = config.controlLayout, performance = config.performance, binds = config.binds, stickMouse = config.stickMouse,
                 steamAppID = appID, dockReport = graph.dock.reportFile.absolutePath, dockInstallerResults = graph.dock.installerResults.absolutePath,
-                diagnostics = graph.settings.diagnostics.value)
+                diagnostics = graph.settings.diagnostics.value,
+                frameCap = config.frameCap, cpuMode = config.cpuMode, steadyPerformance = graph.settings.steadyPerformance.value)
         }
         graph.steamConfigs.update(appID) { it.copy(lastPlayed = System.currentTimeMillis()) }
         return spec
@@ -78,7 +81,8 @@ object Launches {
             graphics = game.config.resolvedGraphics(), environment = GameConfig.parseEnvironment(game.config.environment),
             dllOverrides = game.config.dllOverrides, touchControls = game.config.touchControls, controlLayout = game.config.controlLayout,
             performance = game.config.performance, binds = game.config.binds, stickMouse = game.config.stickMouse,
-            diagnostics = graph.settings.diagnostics.value)
+            diagnostics = graph.settings.diagnostics.value,
+            frameCap = game.config.frameCap, cpuMode = game.config.cpuMode, steadyPerformance = graph.settings.steadyPerformance.value)
     }
 
     /** Runs an installer (EXE or MSI) in a game's prefix, for runtimes the game needs. */

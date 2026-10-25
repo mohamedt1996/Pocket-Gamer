@@ -72,13 +72,11 @@ public final class PortRuntime {
   File p=prefix(id), tmp=new File(gameDir(id),"tmp");
   if(!p.isDirectory()&&!p.mkdirs())throw new IOException("Cannot create prefix");
   if(!tmp.isDirectory()&&!tmp.mkdirs())throw new IOException("Cannot create TMPDIR");
-  File registry=new File(p,"system.reg");
-  if(!registry.exists()) {
-   Fs.writeText(registry.toPath(),"WINE REGISTRY Version 2\n\n[Software\\\\Microsoft\\\\Wow64\\\\amd64]\n@=\"libarm64ecfex.dll\"\n\n[Software\\\\Microsoft\\\\Wow64\\\\x86]\n@=\"libwow64fex.dll\"\n\n[Software\\\\Wine\\\\Drivers]\n\"Graphics\"=\"android\"\n\"Audio\"=\"directaudio\"\n");
-  }
+  // Same 64-bit prefix registry as game sessions (WineLaunch.seedRegistry).
+  org.pocketarcade.madeira.session.WineLaunch.seedRegistry(p);
   HashMap<String,String> env=new HashMap<>();
   env.put("HOME",gameDir(id).getAbsolutePath());env.put("TMPDIR",tmp.getAbsolutePath());
-  env.put("WINEPREFIX",p.getAbsolutePath());env.put("WINELOADER",new File(root(),"bin/wine").getAbsolutePath());
+  env.put("WINEPREFIX",p.getAbsolutePath());env.put("WINELOADER",org.pocketarcade.madeira.session.WineLaunch.loader(root()).getAbsolutePath());
   env.put("WINESERVER",new File(root(),"bin/wineserver").getAbsolutePath());
   env.put("WINEDLLPATH",new File(root(),"lib/wine").getAbsolutePath());
   env.put("WINEDEBUGLOG",new File(gameDir(id),"wine.log").getAbsolutePath());env.put("WINEDEBUG","+timestamp,+pid,+seh");

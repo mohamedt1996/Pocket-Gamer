@@ -1,0 +1,104 @@
+diff --git a/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h b/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
+index 69e410c..e14b138 100644
+--- a/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
++++ b/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
+@@ -16,6 +16,16 @@
+ #include <type_traits>
+ 
+ namespace FEXCore::Utils {
++#ifdef _WIN32
++// The Windows modules run under Wine, and on a 16 KB page kernel Wine applies the union of the 4 KB
++// protections inside each host page: a 4 KB guard page next to writable memory does not fault. An
++// inaccessible 64 KB tail behind the guard page (the allocation granularity, a whole number of host
++// pages at any page size) makes an overflow fault in memory the guard handler recognises.
++static constexpr size_t GuardTailSize = 0x10000;
++#else
++static constexpr size_t GuardTailSize = 0;
++#endif
++
+ /**
+  * @brief An intrusive thread pool allocator
+  *
+@@ -419,9 +429,9 @@ public:
+ 
+ private:
+   void* Alloc(size_t Size) override {
+-    auto Ptr = FEXCore::Allocator::VirtualAlloc(Size);
++    auto Ptr = FEXCore::Allocator::VirtualAlloc(Size + GuardTailSize);
+     uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Ptr) + Size - 1, FEXCore::Utils::FEX_PAGE_SIZE);
+-    if (!FEXCore::Allocator::VirtualProtect(reinterpret_cast<void*>(LastPageAddr), FEXCore::Utils::FEX_PAGE_SIZE,
++    if (!FEXCore::Allocator::VirtualProtect(reinterpret_cast<void*>(LastPageAddr), FEXCore::Utils::FEX_PAGE_SIZE + GuardTailSize,
+                                             FEXCore::Allocator::ProtectOptions::None)) {
+       LogMan::Msg::EFmt("Failed to mprotect last page of code buffer.");
+     }
+diff --git a/Source/Windows/Common/CallRetStack.h b/Source/Windows/Common/CallRetStack.h
+index 215591b..b10a63a 100644
+--- a/Source/Windows/Common/CallRetStack.h
++++ b/Source/Windows/Common/CallRetStack.h
+@@ -7,6 +7,13 @@
+ #include <FEXCore/Debug/InternalThreadState.h>
+ 
+ namespace FEX::Windows::CallRetStack {
++// The guard regions around the stack must be inaccessible at the host's page size, which on newer
++// Android kernels is 16 KB: Wine applies the union of the 4 KB protections inside a host page, so
++// a 4 KB no-access page next to the committed stack is readable and writable. An imbalance then ran
++// past the allocation instead of faulting in its guard. The allocation granularity covers any host
++// page size.
++static constexpr uint64_t CallRetGuardSize = 0x10000;
++
+ struct CallRetStackInfo {
+   uint64_t AllocationBase;
+   uint64_t AllocationEnd;
+@@ -16,21 +23,21 @@ struct CallRetStackInfo {
+ CallRetStackInfo GetInfoThread(FEXCore::Core::InternalThreadState* Thread) {
+   uint64_t Base = reinterpret_cast<uint64_t>(Thread->CallRetStackBase);
+   // Leave some room from the base for the default location to allow for underflows without constant exceptions
+-  return {Base - FEXCore::Utils::FEX_PAGE_SIZE, Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + FEXCore::Utils::FEX_PAGE_SIZE,
++  return {Base - CallRetGuardSize, Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + CallRetGuardSize,
+           Base + FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE / 4};
+ }
+ 
+ void InitializeThread(FEXCore::Core::InternalThreadState* Thread) {
+   // Allocate the call-ret stack with guard pages on both sides
+-  const void* CallRetStackAlloc = ::VirtualAlloc(nullptr, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE,
++  const void* CallRetStackAlloc = ::VirtualAlloc(nullptr, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * CallRetGuardSize,
+                                                  MEM_RESERVE | MEM_TOP_DOWN, PAGE_NOACCESS);
+ 
+   FEXCore::Allocator::VirtualName("FEXMem_CallRetStacks", CallRetStackAlloc,
+-                                  FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE);
+-  FEXCore::Allocator::VirtualTHPControl(CallRetStackAlloc, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * FEXCore::Utils::FEX_PAGE_SIZE,
++                                  FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * CallRetGuardSize);
++  FEXCore::Allocator::VirtualTHPControl(CallRetStackAlloc, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE + 2 * CallRetGuardSize,
+                                         FEXCore::Allocator::THPControl::Disable);
+ 
+-  Thread->CallRetStackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + FEXCore::Utils::FEX_PAGE_SIZE);
++  Thread->CallRetStackBase = reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(CallRetStackAlloc) + CallRetGuardSize);
+   ::VirtualAlloc(Thread->CallRetStackBase, FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE, MEM_COMMIT, PAGE_READWRITE);
+ 
+   Thread->CurrentFrame->State.callret_sp = GetInfoThread(Thread).DefaultLocation;
+diff --git a/Source/Windows/Common/JITGuardPage.h b/Source/Windows/Common/JITGuardPage.h
+index 007d498..9245d65 100644
+--- a/Source/Windows/Common/JITGuardPage.h
++++ b/Source/Windows/Common/JITGuardPage.h
+@@ -2,16 +2,18 @@
+ #pragma once
+ #include <FEXCore/Debug/InternalThreadState.h>
+ #include <FEXCore/Utils/LongJump.h>
++#include <FEXCore/Utils/ThreadPoolAllocator.h>
+ 
+ namespace FEX::Windows::JITGuardPage {
+ static constexpr bool IsAddressInJITGuardPage(uintptr_t GuardPage, uintptr_t Address) {
+-  return GuardPage != 0 && Address >= GuardPage && Address < GuardPage + FEXCore::Utils::FEX_PAGE_SIZE;
++  // The guard page and the inaccessible tail behind it (see GuardTailSize).
++  return GuardPage != 0 && Address >= GuardPage && Address < GuardPage + FEXCore::Utils::FEX_PAGE_SIZE + FEXCore::Utils::GuardTailSize;
+ }
+ 
+ static_assert(!IsAddressInJITGuardPage(0, 0));
+ static_assert(IsAddressInJITGuardPage(0x1000, 0x1000));
+-static_assert(IsAddressInJITGuardPage(0x1000, 0x1fff));
+-static_assert(!IsAddressInJITGuardPage(0x1000, 0x2000));
++static_assert(IsAddressInJITGuardPage(0x1000, 0x1fff + FEXCore::Utils::GuardTailSize));
++static_assert(!IsAddressInJITGuardPage(0x1000, 0x2000 + FEXCore::Utils::GuardTailSize));
+ 
+ static inline bool HandleJITGuardPage(FEXCore::Core::InternalThreadState* Thread, void* Address, uint64_t* GPRs, __uint128_t* FPRs, uint64_t* PC) {
+   if (IsAddressInJITGuardPage(Thread->JITGuardPage, reinterpret_cast<uintptr_t>(Address))) {

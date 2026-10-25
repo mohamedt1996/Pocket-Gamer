@@ -24,6 +24,7 @@ python3 dlls/winevulkan/make_vulkan
 bash build-scripts/build-step0.sh
 bash build-scripts/build-step-arm64ec.sh --build-sysvshm
 bash build-scripts/build-step-arm64ec.sh --enable-16kb-pages --configure
+python3 "$ROOT/runtime/android/android-sonames.py" "$SRC"
 make -j2
 bash build-scripts/build-step-arm64ec.sh --enable-16kb-pages --install
 mkdir -p "$OUT"

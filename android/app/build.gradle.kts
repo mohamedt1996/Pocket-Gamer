@@ -4,22 +4,21 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
-// -PwineVariant=madeira builds the experimental APK around Madeira's Wine. It gets
-// its own application ID and name so it installs next to the regular app.
-val wineVariant = (findProperty("wineVariant") as String?) ?: "proton"
-require(wineVariant == "proton" || wineVariant == "madeira") { "wineVariant must be proton or madeira" }
+val releaseKeystore = System.getenv("POCKET_ARCADE_KEYSTORE_FILE")
+val releaseStorePassword = System.getenv("POCKET_ARCADE_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("POCKET_ARCADE_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("POCKET_ARCADE_KEY_PASSWORD")
 android {
     namespace = "org.pocketarcade.madeira"
     compileSdk = 35
     ndkVersion = "27.3.13750724"
     defaultConfig {
-        applicationId = if (wineVariant == "madeira") "org.pocketarcade.madeira.winemadeira" else "org.pocketarcade.madeira"
-        manifestPlaceholders["appLabel"] = if (wineVariant == "madeira") "Pocket Arcade (Madeira Wine)" else "Pocket Arcade"
+        applicationId = "org.pocketarcade.madeira"
+        manifestPlaceholders["appLabel"] = "Pocket Arcade"
         minSdk = 28
         targetSdk = 28 // Prototype only: review modern Android policies before distribution.
-        versionCode = 3
-        versionName = "0.3.0" + (if (wineVariant == "madeira") "-madeira-wine" else "")
-        buildConfigField("String", "WINE_VARIANT", "\"$wineVariant\"")
+        versionCode = 5
+        versionName = "0.5.0-alpha"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { cppFlags += "-std=c++17" } }
     }
@@ -37,6 +36,29 @@ android {
         )
     }
     buildFeatures { compose = true; buildConfig = true }
+    lint {
+        // This alpha is distributed directly as an APK. Raising targetSdk needs
+        // a separate scoped-storage and notification-permission migration.
+        disable += "ExpiredTargetSdkVersion"
+    }
+    signingConfigs {
+        create("production") {
+            if (listOf(releaseKeystore, releaseStorePassword, releaseKeyAlias, releaseKeyPassword).all { !it.isNullOrBlank() }) {
+                storeFile = file(releaseKeystore!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("production")
+        }
+    }
+    // These payloads are already gzip-compressed. Recompressing them wastes heap and CPU.
+    androidResources { noCompress += listOf("tgz", "zip") }
     packaging { resources { excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1", "META-INF/*.kotlin_module") } }
     testOptions { unitTests.isReturnDefaultValues = true }
 }
@@ -52,7 +74,11 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("com.google.zxing:core:3.5.3")
+    implementation("com.jakewharton.timber:timber:5.0.1")
     testImplementation("junit:junit:4.13.2")
+    // Real org.json in unit tests (Android's is a stub there).
+    testImplementation("org.json:json:20240303")
 }
