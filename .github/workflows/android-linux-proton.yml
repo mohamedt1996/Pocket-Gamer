@@ -289,7 +289,7 @@ jobs:
       - name: Verify and publish pre-release
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.POCKET_ARCADE_RELEASE_TOKEN || github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail

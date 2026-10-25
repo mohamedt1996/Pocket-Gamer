@@ -24,6 +24,13 @@ updates, configure GitHub Actions with these repository settings:
   `POCKET_ARCADE_KEY_ALIAS`, and `POCKET_ARCADE_KEY_PASSWORD`.
 - Variable: `POCKET_ARCADE_SIGNING_CERT_SHA256`.
 
+GitHub release publication also needs repository **Actions → General → Workflow
+permissions → Read and write permissions**, or an Actions secret
+`POCKET_ARCADE_RELEASE_TOKEN` containing a fine-grained token with this
+repository's **Contents: read and write** permission. GitHub's default
+read-only `GITHUB_TOKEN` cannot create the release even after the APK passes
+build and install checks. Keep a release token private and do not commit it.
+
 The keystore must be a persistent private Android signing key kept outside Git.
 `POCKET_ARCADE_SIGNING_CERT_SHA256` is the SHA-256 certificate digest reported by
 `keytool -list -v -keystore /path/to/release.keystore -alias YOUR_ALIAS`,

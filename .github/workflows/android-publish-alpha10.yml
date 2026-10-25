@@ -59,7 +59,7 @@ jobs:
           github-token: ${{ github.token }}
       - name: Publish signed APK from successful build
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.POCKET_ARCADE_RELEASE_TOKEN || github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
