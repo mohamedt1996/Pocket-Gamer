@@ -1,0 +1,27 @@
+name: Diagnose failed Android release
+
+on:
+  push:
+    tags: ['android-diagnostics-v*']
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  gradle_failure:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Show tail of failed release build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "/repos/$GH_REPO/actions/jobs/121120051542/logs" > "$RUNNER_TEMP/gradle-job.log"
+          {
+            echo '## Failed Android Gradle job (last 160 lines)'
+            echo '```text'
+            tail -n 160 "$RUNNER_TEMP/gradle-job.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
