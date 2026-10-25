@@ -2,13 +2,14 @@ name: Publish verified Android alpha.10 APK
 
 on:
   push:
-    tags: ['android-publish-v0.1.0-alpha.10']
+    tags: ['android-publish-v0.1.0-alpha.10*']
 
 permissions:
   contents: read
 
 jobs:
   install_smoke:
+    if: github.ref_name == 'android-publish-v0.1.0-alpha.10'
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     permissions:
@@ -44,6 +45,7 @@ jobs:
 
   release:
     needs: install_smoke
+    if: always() && (needs.install_smoke.result == 'success' || github.ref_name == 'android-publish-v0.1.0-alpha.10-r2')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -63,10 +65,6 @@ jobs:
           set -euo pipefail
           (cd release-assets && sha256sum -c SHA256SUMS.txt)
           tag=android-proton-v0.1.0-alpha.10
-          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
-            echo "Release $tag already exists" >&2
-            exit 1
-          fi
           if grep -q '^EAC bundled: true$' release-assets/PACKAGE-STATUS.txt; then
             eac_note='The official Proton EasyAntiCheat Runtime is bundled. Game publisher support and Mi Pad 7 acceptance remain unverified.'
           else
@@ -86,6 +84,23 @@ jobs:
 
           Pocket Dock's Android Box32 and an accelerated Linux Vulkan bridge remain unavailable. Rocket League and EAC acceptance have not been verified on the Mi Pad 7.
           EOF
-          gh release create "$tag" release-assets/* --repo "$GH_REPO" \
-            --target 9af2423 --title "Pocket Arcade Android Wine/FEX + Proton $tag" \
-            --notes-file release-notes.md --prerelease
+          if gh release view "$tag" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo 'A release exists; uploading any missing assets' > "$RUNNER_TEMP/publish.log"
+            set +e
+            gh release upload "$tag" release-assets/* --repo "$GH_REPO" --clobber 2>&1 | tee -a "$RUNNER_TEMP/publish.log"
+          else
+            echo 'Creating the release and uploading assets' > "$RUNNER_TEMP/publish.log"
+            set +e
+            gh release create "$tag" release-assets/* --repo "$GH_REPO" \
+              --target 9af2423 --title "Pocket Arcade Android Wine/FEX + Proton $tag" \
+              --notes-file release-notes.md --prerelease 2>&1 | tee -a "$RUNNER_TEMP/publish.log"
+          fi
+          result=${PIPESTATUS[0]}
+          {
+            echo '## Release publication result'
+            echo "Exit code: $result"
+            echo '```text'
+            tail -n 60 "$RUNNER_TEMP/publish.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$result"
