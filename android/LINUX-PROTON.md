@@ -9,20 +9,20 @@ path when the game requires it. It does not alter EAC files or bypass checks.
 
 ## Signed all-in-one release
 
-The production workflow builds one non-debug `assembleRelease` APK. It bundles
+The release workflow builds one non-debug `assembleRelease` APK. It bundles
 Android ARM64EC Wine/FEX and WoWBox64, GE-Proton, the multiarch Debian rootfs,
-Box64, and the official Proton EasyAntiCheat Runtime. The Linux packages are
+and Box64. The official Proton EasyAntiCheat Runtime is included only if the
+repository owner supplies an archive authorized for redistribution; otherwise
+install the Steam tool in the app using your Steam account. The Linux packages are
 extracted to app-private storage by **Install included Linux packages** in
 **Settings → Pocket Dock**. Plan for several gigabytes of free storage.
 
-A tag matching `android-proton-v*` starts the workflow. It will stop before
-building unless GitHub Actions has these repository settings:
+A tag matching `android-proton-v*` starts the workflow. For repeatable Android
+updates, configure GitHub Actions with these repository settings:
 
 - Secrets: `POCKET_ARCADE_KEYSTORE_BASE64`, `POCKET_ARCADE_KEYSTORE_PASSWORD`,
-  `POCKET_ARCADE_KEY_ALIAS`, `POCKET_ARCADE_KEY_PASSWORD`, and
-  `PROTON_EAC_RUNTIME_URL`.
-- Variables: `POCKET_ARCADE_SIGNING_CERT_SHA256`,
-  `PROTON_EAC_RUNTIME_SHA256`, and `PROTON_EAC_REDISTRIBUTION_APPROVED=true`.
+  `POCKET_ARCADE_KEY_ALIAS`, and `POCKET_ARCADE_KEY_PASSWORD`.
+- Variable: `POCKET_ARCADE_SIGNING_CERT_SHA256`.
 
 The keystore must be a persistent private Android signing key kept outside Git.
 `POCKET_ARCADE_SIGNING_CERT_SHA256` is the SHA-256 certificate digest reported by
@@ -31,9 +31,13 @@ with the separating colons removed.
 `POCKET_ARCADE_KEYSTORE_BASE64` is the base64 encoding of the keystore file.
 The workflow checks the signed APK's certificate against that digest. Keep the
 key and passwords backed up; later updates must use the same certificate.
-See [EAC-SETUP.md](EAC-SETUP.md) for the official EAC archive and distribution
-requirement. The workflow refuses to publish without it. A full install test
-runs through Android's package manager before publication.
+Without these settings the workflow generates a one-time release key. That APK
+is non-debug and installable, but a future release cannot update it in place;
+back up data before uninstalling. `PACKAGE-STATUS.txt` on the release records
+the certificate fingerprint and whether EAC is bundled. See
+[EAC-SETUP.md](EAC-SETUP.md) for the optional official EAC archive and
+distribution requirement. An install test runs through Android's package manager
+before publication.
 
 Android Box32 is still unavailable, so Linux i386 processes cannot run through
 Pocket Dock despite the included i386 libraries. The Android-native Wine/FEX
@@ -56,9 +60,9 @@ Mi Pad 7.
    or `easyanticheat_x64.so`. The app requires this before attempting an EAC
    game. The game publisher must also support EAC on Proton.
 
-The signed all-in-one workflow requires an official EAC archive and verifies
-its x86-64 bridge before packaging. Proton itself is never treated as the EAC
-runtime. Publication also requires redistribution approval.
+If an official EAC archive is configured for bundling, the workflow verifies
+its x86-64 bridge and requires redistribution approval. Proton itself is never
+treated as the EAC runtime. Otherwise, use the in-app Steam tool installer.
 
 The pinned Proton archive is
 [GE-Proton11-11-x86_64](https://github.com/GloriousEggroll/proton-ge-custom/releases/tag/GE-Proton11-11),

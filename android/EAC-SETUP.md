@@ -2,9 +2,9 @@
 
 Pocket Arcade cannot treat Proton or the game's Windows EAC files as the
 **Proton EasyAntiCheat Runtime**. It needs the official x86-64 Linux runtime
-that Steam distributes as a separate tool. The signed all-in-one workflow
-requires an approved official archive before it publishes an APK. Earlier
-alpha APKs did not bundle that runtime.
+that Steam distributes as a separate tool. The release workflow packages it
+only when an approved official archive is supplied. Otherwise the app offers
+an authenticated Steam download. Earlier alpha APKs did not bundle that runtime.
 
 In **Epic Games → Linux Proton research**, sign in to Steam and tap **Install
 EAC runtime from Steam**. Pocket Arcade requests Steam tool app `1826330` from
@@ -34,8 +34,9 @@ The release workflow requires `PROTON_EAC_RUNTIME_URL` as a GitHub Actions
 secret, `PROTON_EAC_RUNTIME_SHA256` as a repository variable, and
 `PROTON_EAC_REDISTRIBUTION_APPROVED=true` as a repository variable. The URL
 must provide an official archive the repository owner is authorized to
-redistribute. The workflow verifies its checksum and x86-64 EAC bridge, embeds
-it in the sole APK, and fails rather than shipping an incomplete release.
+redistribute. The workflow verifies its checksum and x86-64 EAC bridge before
+embedding it in the sole APK. Without those settings, the APK still ships with
+the in-app Steam installer and `PACKAGE-STATUS.txt` states that EAC is not bundled.
 
 An anonymous SteamCMD install of Valve's tool app `1826330` was tested on a
 hosted Linux runner and returned `Failed to install app '1826330' (Missing
